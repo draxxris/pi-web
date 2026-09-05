@@ -207,7 +207,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, cacheMis
   const cacheMissText = cacheMisses && !(expanded || reveal) ? cacheMissSummaryText(t, cacheMisses) : undefined;
 
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div className="chat-row" style={{ marginBottom: 14 }}>
       <button
         type="button"
         aria-expanded={expanded || reveal}
@@ -998,6 +998,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       draftKey={session?.id ?? newSessionDraftKey ?? undefined}
       cwd={session?.cwd ?? newSessionCwd}
       onAttachFiles={onAttachFiles}
+      isInitialMessage={messages.length === 0}
     />
   );
 
@@ -1092,7 +1093,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           className="scrollbar-subtle min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-gutter:stable]"
           style={{ visibility: pendingScrollRestore ? "hidden" : undefined }}
         >
-          <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
+          <div className="chat-message-column" style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div ref={messageContentRef} onPointerUp={captureQuotedSelection} style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
             {(() => {
               let lastUserIdx = -1;
@@ -1508,12 +1509,14 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           </div>
         )}
         {chatInputElement}
-        <ExtensionStatusBar
-          statuses={extensionStatuses}
-          widgets={extensionWidgets}
-          onCommand={handleSend}
-          commandsDisabled={sessionBusy}
-        />
+        {!isMobile && (
+          <ExtensionStatusBar
+            statuses={extensionStatuses}
+            widgets={extensionWidgets}
+            onCommand={handleSend}
+            commandsDisabled={sessionBusy}
+          />
+        )}
       </div>
       {isEmptyNew && <div className="min-h-0 flex-1" />}
     </div>
