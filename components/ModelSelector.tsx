@@ -101,6 +101,7 @@ export function ModelSelector({
   const isMobile = useIsMobile();
   const rootRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<{ top: number; right: number; bottom: number; left: number; width: number } | null>(null);
   const [filter, setFilter] = useState("");
@@ -126,7 +127,7 @@ export function ModelSelector({
     : emptyLabel ?? (options.length > 0 ? t("chat.selectModel") : t("chat.noModels")));
 
   useEffect(() => {
-    const handleOutsideClick = (event: MouseEvent) => {
+    const handleOutsideClick = (event: MouseEvent | TouchEvent) => {
       if (
         rootRef.current && !rootRef.current.contains(event.target as Node)
         && panelRef.current && !panelRef.current.contains(event.target as Node)
@@ -136,7 +137,11 @@ export function ModelSelector({
       }
     };
     document.addEventListener("mousedown", handleOutsideClick);
-    return () => document.removeEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("touchstart", handleOutsideClick);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("touchstart", handleOutsideClick);
+    };
   }, []);
 
   // While the picker is open, a phone keyboard shrinks the app height
@@ -237,6 +242,7 @@ export function ModelSelector({
       }}
     >
       <button
+        ref={buttonRef}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
@@ -369,10 +375,10 @@ export function ModelSelector({
                   }}
                   placeholder={t("chat.filterModels")}
                   aria-label={t("chat.filterModels")}
-                  // On phones, focusing the filter opens the on-screen keyboard,
-                  // which shrinks the viewport and pushes the list off-screen
+                  // Prevents the on-screen keyboard from shrinking the list
                   // before the user has decided to filter. Tap to filter instead.
                   autoFocus={!isMobile}
+                  inputMode="search"
                   autoComplete="off"
                   spellCheck={false}
                   style={{
