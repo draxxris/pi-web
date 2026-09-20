@@ -27,6 +27,10 @@ test("renders as a compact left-positioned dropdown without a centered inner wid
   assert.doesNotMatch(source, /maxWidth: 680/);
 });
 
+test("prefers the explicit session title over the subagent description", () => {
+  assert.match(source, /explicitTitle \|\| relation\?\.description \|\| sessionTitle\(session\)/);
+});
+
 test("shows persisted completion states while live running state takes precedence", () => {
   assert.match(source, /const status: SubagentSessionStatus = running \? "running" : relation\?\.status \?\? "completed"/);
   assert.match(source, /t\(`agentSwitcher\.status\.\$\{status\}`\)/);

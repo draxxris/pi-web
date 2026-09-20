@@ -4,16 +4,22 @@ import { dirname, join } from "path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   attachSessionProjectInfo,
+  getJ0k3rMarkerData,
+  hasJ0k3rMarker,
   listAllSessions,
-  mergeSessionLists,
+  readJ0k3rRun,
   resolveSessionPath,
   resolveSessionIdByPath,
   invalidateSessionPathCache,
   invalidateSessionListCache,
   buildSessionContext,
+  isSubagentSessionFile,
   readSessionHeader,
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
+import { buildSessionDeletionPlan, type SessionDeletionRecord } from "@/lib/session-deletion";
+import { stopRegisteredSubagentSessions } from "@/lib/subagent-session-lifecycle";
+import { getLiveSubagentSessionIds } from "@/lib/subagent-session-lifecycle";
 import { abortSubagent, getRpcSession, getRpcSessionInfos } from "@/lib/rpc-manager";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
@@ -45,13 +51,34 @@ export async function GET(
       liveWrapper = undefined;
     }
     const liveRpc = liveWrapper;
-    const resolvedPath = liveRpc ? null : await resolveSessionPath(id);
-    if (!liveRpc && !resolvedPath) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    // j0k3r nested runs write straight to the JSONL file, bypassing any pi-web
+    // wrapper for the same file. A wrapper opened before the run keeps serving
+    // its stale in-memory entries, so reads for those files must come from disk.
+    // The marker is written at session creation, so the wrapper's own entries
+    // reliably identify ownership without extra I/O.
+    const wrapperEntries = liveRpc
+      ? (liveRpc.inner.sessionManager.getEntries() as unknown as SessionEntry[])
+      : null;
+    const liveExternalIds = new Set(getLiveSubagentSessionIds());
+    const readFromDisk = liveExternalIds.has(id)
+      || (wrapperEntries !== null && hasJ0k3rMarker(wrapperEntries));
+    let sm: SessionManager;
+    let filePath: string;
+    if (readFromDisk) {
+      const diskPath = liveRpc?.sessionFile || await resolveSessionPath(id);
+      if (!diskPath) {
+        return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      }
+      sm = SessionManager.open(diskPath);
+      filePath = sm.getSessionFile() || diskPath;
+    } else {
+      const resolvedPath = liveRpc ? null : await resolveSessionPath(id);
+      if (!liveRpc && !resolvedPath) {
+        return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      }
+      sm = liveRpc?.inner.sessionManager ?? SessionManager.open(resolvedPath!);
+      filePath = liveRpc?.sessionFile || sm.getSessionFile() || resolvedPath || "";
     }
-
-    const sm = liveRpc?.inner.sessionManager ?? SessionManager.open(resolvedPath!);
-    const filePath = liveRpc?.sessionFile || sm.getSessionFile() || resolvedPath || "";
     const entries = sm.getEntries();
     const leafId = sm.getLeafId();
     const tree = projectTreeForResponse(sm.getTree());
@@ -83,6 +110,27 @@ export async function GET(
     const subagent = header
       ? readSubagentRun(entries as never, header.id, filePath)
       : null;
+    // j0k3r marker sessions are nested runs owned by another host, not forks.
+    // readJ0k3rRun is display metadata only and never applies pi-web subagent
+    // tool/status schemas to them (see lib/subagents.ts).
+    let j0k3r: ReturnType<typeof readJ0k3rRun> = null;
+    if (!subagent && header && getJ0k3rMarkerData(entries as never)) {
+      const markerData = getJ0k3rMarkerData(entries as never);
+      const markerParentPath = markerData && typeof markerData.parentSessionPath === "string"
+        ? markerData.parentSessionPath
+        : undefined;
+      const markerParentId = markerParentPath
+        ? await resolveSessionIdByPath(markerParentPath)
+        : undefined;
+      j0k3r = readJ0k3rRun(
+        entries as never,
+        header.id,
+        filePath,
+        parentSessionId,
+        markerParentId,
+        liveExternalIds.has(header.id),
+      );
+    }
     const toolNames = readSubagentSessionResources(entries as never)?.tools
       ?? readSessionToolSelection(entries as never);
     const info = header ? (await attachSessionProjectInfo([{
@@ -102,9 +150,11 @@ export async function GET(
       parentSessionId,
       ...(subagent
         ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: liveRpc?.isRunning() ? "running" as const : subagent.status } }
-        : header.parentSession
-          ? { relation: { kind: "fork" as const, ...(parentSessionId ? { originSessionId: parentSessionId } : {}) } }
-          : {}),
+        : j0k3r
+          ? { relation: { kind: "subagent" as const, parentSessionId: j0k3r.parentSessionId, profile: j0k3r.profile, description: j0k3r.description, status: j0k3r.status } }
+          : header.parentSession
+            ? { relation: { kind: "fork" as const, ...(parentSessionId ? { originSessionId: parentSessionId } : {}) } }
+            : {}),
       transient: !filePath || !existsSync(filePath),
     }]))[0] : null;
 
@@ -164,151 +214,163 @@ export async function DELETE(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    // Read only the bounded header before deleting.
-    let parentSessionPath: string | undefined;
+    // Read only the bounded header before deleting. Empty runtime sessions
+    // have a cached path before their first disk write (upstream edf0deb).
+    let targetHeader: ReturnType<typeof readSessionHeader> | undefined;
     try {
-      parentSessionPath = readSessionHeader(filePath)?.parentSession;
+      targetHeader = readSessionHeader(filePath);
     } catch (error) {
-      // Empty runtime sessions have a cached path before their first disk write.
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      targetHeader = undefined;
     }
-    let parentSessionId: string | undefined;
-    if (parentSessionPath) {
-      try {
-        // The parent may have been deleted or moved already; treat it as absent.
-        parentSessionId = readSessionHeader(parentSessionPath)?.id;
-      } catch {
-        parentSessionId = undefined;
-      }
+    const listedSessions = await SessionManager.listAll();
+    // Both standard pi-web subagents (pi-web:subagent, upstream e83f4b5) and
+    // marked j0k3r sessions cascade-delete with their parent; ordinary forks
+    // are preserved and reparented. listAllSessions synthesizes
+    // relation.kind === "subagent" for both kinds (plus live RPC wrappers).
+    const persistedRelations = await listAllSessions({ force: true });
+    const subagentIds = new Set<string>();
+    for (const session of persistedRelations) {
+      if (session.relation?.kind === "subagent") subagentIds.add(session.id);
     }
-
-    const targetPathKey = sessionPathKey(filePath);
-    const dir = dirname(filePath);
-    // Deleting a session also deletes every persisted or live subagent below it.
-    const sessions = mergeSessionLists(
-      await listAllSessions({ force: true }),
-      getRpcSessionInfos({ includeTransient: true }),
-    );
-    const childrenByParent = new Map<string, string[]>();
-    for (const session of sessions) {
-      if (session.relation?.kind !== "subagent") continue;
-      const children = childrenByParent.get(session.relation.parentSessionId) ?? [];
-      children.push(session.id);
-      childrenByParent.set(session.relation.parentSessionId, children);
+    for (const live of getRpcSessionInfos({ includeTransient: true })) {
+      if (live.relation?.kind === "subagent") subagentIds.add(live.id);
     }
-    const sessionPaths = new Map(sessions.map((session) => [session.id, session.path]));
-    // Include local files even when the global catalogue is stale or incomplete.
+    const records: SessionDeletionRecord[] = listedSessions.map((session) => ({
+      id: session.id,
+      path: session.path,
+      parentPath: session.parentSessionPath,
+      isSubagent: isSubagentSessionFile(session.path) || subagentIds.has(session.id),
+    }));
+    // Include local files even when the global catalogue is stale or incomplete
+    // (upstream e83f4b5): the DELETE integration test uses an isolated tmpdir
+    // outside the session directories, so catalogue-only records would miss
+    // the siblings entirely and leave subagent descendants behind.
     try {
+      const dir = dirname(filePath);
+      const seenKeys = new Set(records.map((record) => sessionPathKey(record.path)));
+      seenKeys.add(sessionPathKey(filePath));
       for (const file of readdirSync(dir).filter((name) => name.endsWith(".jsonl"))) {
         const childPath = join(dir, file);
-        if (sessionPathKey(childPath) === targetPathKey) continue;
+        if (seenKeys.has(sessionPathKey(childPath))) continue;
         try {
           const lines = readFileSync(childPath, "utf8").split("\n");
-          const header = JSON.parse(lines[0]) as { type?: string; id?: string };
+          const header = JSON.parse(lines[0]) as { type?: string; id?: string; parentSession?: string };
           if (header.type !== "session" || typeof header.id !== "string") continue;
           const entries = lines.slice(1).flatMap((line) => {
             try { return [JSON.parse(line) as SessionEntry]; } catch { return []; }
           });
-          const subagent = readSubagentRun(entries, header.id, childPath);
-          if (!subagent) continue;
-          const children = childrenByParent.get(subagent.parentSessionId) ?? [];
-          children.push(header.id);
-          childrenByParent.set(subagent.parentSessionId, children);
-          sessionPaths.set(header.id, childPath);
+          const isStandardSubagent = !!readSubagentRun(entries, header.id, childPath);
+          seenKeys.add(sessionPathKey(childPath));
+          records.push({
+            id: header.id,
+            path: childPath,
+            parentPath: header.parentSession,
+            isSubagent: isStandardSubagent || isSubagentSessionFile(childPath) || subagentIds.has(header.id),
+          });
         } catch { /* skip malformed or concurrently removed sessions */ }
       }
     } catch { /* skip if dir unreadable */ }
-    const deletedSessionIds = new Set<string>([id]);
-    const pending = [id];
-    while (pending.length > 0) {
-      const parentId = pending.pop()!;
-      for (const childId of childrenByParent.get(parentId) ?? []) {
-        if (deletedSessionIds.has(childId)) continue;
-        deletedSessionIds.add(childId);
-        pending.push(childId);
-      }
-    }
-    const deletedPaths = new Map<string, string>([[id, filePath]]);
-    for (const deletedId of deletedSessionIds) {
-      const sessionPath = sessionPaths.get(deletedId);
-      if (sessionPath) deletedPaths.set(deletedId, sessionPath);
-    }
-    for (const deletedId of deletedSessionIds) {
-      if (deletedPaths.has(deletedId)) continue;
-      const runtimePath = getRpcSession(deletedId)?.sessionFile;
-      if (runtimePath) deletedPaths.set(deletedId, runtimePath);
-      else {
-        const resolvedPath = await resolveSessionPath(deletedId);
-        if (resolvedPath) deletedPaths.set(deletedId, resolvedPath);
-      }
-    }
-    const deletedPathKeys = new Set([...deletedPaths.values()].map((path) => sessionPathKey(path)));
+    const plan = buildSessionDeletionPlan(records, filePath, id, targetHeader?.parentSession);
+    const deletedPaths = plan.deleteRecords.map((record) => record.path);
 
-    // Re-attach all direct children to this session's parent (cascade re-parent)
-    // Scan sibling files in the same directory
-    try {
-      const files = readdirSync(dir).filter(
-        (file) => file.endsWith(".jsonl") && sessionPathKey(join(dir, file)) !== targetPathKey,
-      );
-      for (const file of files) {
-        const childPath = join(dir, file);
-        if (deletedPathKeys.has(sessionPathKey(childPath))) continue;
-        try {
-          const content = readFileSync(childPath, "utf8");
-          const lines = content.split("\n");
-          const header = JSON.parse(lines[0]) as { type?: string; parentSession?: string };
-          if (
-            header.type === "session" &&
-            header.parentSession &&
-            sessionPathKey(header.parentSession) === targetPathKey
-          ) {
-            // Rewrite header with new parentSession
-            header.parentSession = parentSessionPath;
-            lines[0] = JSON.stringify(header);
-            if (parentSessionPath && parentSessionId) {
-              for (let index = 1; index < lines.length; index += 1) {
-                let entry: { type?: string; customType?: string; data?: unknown };
-                try {
-                  entry = JSON.parse(lines[index]);
-                } catch {
-                  continue;
-                }
-                if (
-                  entry.type !== "custom"
-                  || entry.customType !== SUBAGENT_META_TYPE
-                  || typeof entry.data !== "object"
-                  || entry.data === null
-                  || Array.isArray(entry.data)
-                ) continue;
-                entry.data = {
-                  ...entry.data,
-                  parentSessionId,
-                  parentSessionPath,
-                };
-                lines[index] = JSON.stringify(entry);
-                break;
-              }
-            }
-            writeFileSync(childPath, lines.join("\n"));
-          }
-        } catch { /* skip malformed */ }
-      }
-    } catch { /* skip if dir unreadable */ }
-
-    for (const deletedId of [...deletedSessionIds].reverse()) {
-      if (deletedId === id) continue;
-      try { await abortSubagent(deletedId); } catch { /* idle or completed */ }
-      await getRpcSession(deletedId)?.shutdown();
+    // Stop both Pi Web-owned wrappers and externally owned j0k3r sessions
+    // before deleting their files. Normal fork sessions are not in the
+    // deletion set and remain untouched.
+    await getRpcSession(id)?.shutdown();
+    await Promise.all(
+      plan.deleteRecords
+        .filter((record) => record.id && record.id !== id)
+        .map((record) => getRpcSession(record.id)?.shutdown()),
+    );
+    for (const record of plan.deleteRecords) {
+      if (!record.id || record.id === id) continue;
+      try { await abortSubagent(record.id); } catch { /* idle or completed */ }
     }
     try { await abortSubagent(id); } catch { /* ordinary session */ }
-    await getRpcSession(id)?.shutdown();
-    for (const [deletedId, deletedPath] of deletedPaths) {
+    // Transient live subagents without persisted files (upstream e83f4b5).
+    try {
+      const deletedIds = new Set<string>([id]);
+      for (const record of plan.deleteRecords) {
+        if (record.id) deletedIds.add(record.id);
+      }
+      const liveInfos = getRpcSessionInfos({ includeTransient: true });
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const live of liveInfos) {
+          if (!live.id || deletedIds.has(live.id) || live.relation?.kind !== "subagent") continue;
+          if (deletedIds.has(live.relation.parentSessionId)) {
+            deletedIds.add(live.id);
+            grew = true;
+          }
+        }
+      }
+      for (const deadId of deletedIds) {
+        if (deadId === id || plan.deleteRecords.some((record) => record.id === deadId)) continue;
+        try { await abortSubagent(deadId); } catch { /* idle or completed */ }
+        await getRpcSession(deadId)?.shutdown();
+      }
+    } catch { /* best-effort live teardown */ }
+    await stopRegisteredSubagentSessions(deletedPaths, "Parent Pi session deleted");
+
+    for (const operation of plan.reparent) {
       try {
-        unlinkSync(deletedPath);
+        const content = readFileSync(operation.path, "utf8");
+        const newlineIndex = content.indexOf("\n");
+        const firstLine = newlineIndex === -1 ? content : content.slice(0, newlineIndex);
+        const suffix = newlineIndex === -1 ? "\n" : content.slice(newlineIndex);
+        const header = JSON.parse(firstLine) as { type?: string; parentSession?: string };
+        if (header.type !== "session") continue;
+        if (operation.parentPath) header.parentSession = operation.parentPath;
+        else delete header.parentSession;
+        if (operation.parentPath) {
+          // The parent may have been deleted or moved already; treat it as absent (upstream 9cf8d4d).
+          let parentSessionId: string | undefined;
+          try {
+            parentSessionId = readSessionHeader(operation.parentPath)?.id;
+          } catch {
+            parentSessionId = undefined;
+          }
+          if (parentSessionId) {
+            const lines = suffix.split("\n");
+            for (let index = 0; index < lines.length; index += 1) {
+              let entry: { type?: string; customType?: string; data?: unknown };
+              try {
+                entry = JSON.parse(lines[index]);
+              } catch {
+                continue;
+              }
+              if (
+                entry.type !== "custom"
+                || entry.customType !== SUBAGENT_META_TYPE
+                || typeof entry.data !== "object"
+                || entry.data === null
+                || Array.isArray(entry.data)
+              ) continue;
+              entry.data = {
+                ...entry.data,
+                parentSessionId,
+                parentSessionPath: operation.parentPath,
+              };
+              lines[index] = JSON.stringify(entry);
+              break;
+            }
+            writeFileSync(operation.path, JSON.stringify(header) + lines.join("\n"));
+            continue;
+          }
+        }
+        writeFileSync(operation.path, JSON.stringify(header) + suffix);
+      } catch { /* skip malformed or vanished sessions */ }
+    }
+
+    for (const record of plan.deleteRecords) {
+      try {
+        if (existsSync(record.path)) unlinkSync(record.path);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      invalidateSessionPathCache(deletedId);
+      if (record.id) invalidateSessionPathCache(record.id);
     }
     invalidateSessionListCache();
     return NextResponse.json({ ok: true });

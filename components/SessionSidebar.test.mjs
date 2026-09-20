@@ -68,9 +68,20 @@ test("polls running sessions only while the tab is visible", () => {
   assert.match(source, /document\.addEventListener\("visibilitychange", onVisibilityChange\)/);
 });
 
+test("force-refreshes the session list while a runtime session is running", () => {
+  assert.match(source, /const runningIds = new Set\(data\.runningSessionIds \?\? \[\]\);/);
+  assert.match(source, /setExternalRunningSessionIds\(new Set\(data\.externalRunningSessionIds/);
+  assert.match(source, /data\.sessionListVersion !== sessionListVersionRef\.current[\s\S]*?await loadSessions\(\)/);
+  assert.match(source, /else if \(runningIds\.size > 0 \|\| externalIds\.size > 0\)[\s\S]*?refreshSessionList\(\)/);
+  assert.match(source, /void loadSessions\(false, true\)/);
+});
+
 test("exposes the polled running-session set to the shell", () => {
   assert.match(source, /onRunningSessionIdsChange\?: \(ids: Set<string>\) => void/);
   assert.match(source, /onRunningSessionIdsChange\?\.\(runningSessionIds\)/);
+  assert.match(source, /onExternalRunningSessionIdsChange\?: \(ids: Set<string>\) => void/);
+  assert.match(source, /externalRunningSessionIds/);
+  assert.match(source, /onExternalRunningSessionIdsChange\?\.\(externalRunningSessionIds\)/);
 });
 
 test("exposes the loaded session catalog to the shell", () => {
@@ -130,7 +141,8 @@ test("lifecycle refreshes bypass the cache while cross-window polling reuses it"
   assert.match(source, /loadSessions\(isFirst, !isFirst\)/);
   assert.match(source, /data\.sessionListVersion !== sessionListVersionRef\.current[\s\S]*?await loadSessions\(\)/);
   assert.doesNotMatch(source, /sessionRefreshDone|sessionRefreshTimerRef|title=\{t\("sidebar\.refresh"\)\}/);
-  assert.match(source, /loadSessions\(false, true\);[\s\S]*?onBackgroundTaskDone/);
+  assert.match(source, /refreshSessionList\(\);[\s\S]*?onBackgroundTaskDone/);
+  assert.match(source, /void loadSessions\(false, true\)/);
 });
 
 test("does not expose disk-backed actions for transient sessions", () => {

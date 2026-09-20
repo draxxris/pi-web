@@ -136,8 +136,15 @@ export function AppShell() {
   );
   const hasSubagentSessions = Boolean(activeSessionFamily?.subagents.length);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
+  const [externalRunningSessionIds, setExternalRunningSessionIds] = useState<Set<string>>(() => new Set());
   const handleRunningSessionIdsChange = useCallback((ids: Set<string>) => {
     setRunningSessionIds((previous) => {
+      if (previous.size === ids.size && [...ids].every((id) => previous.has(id))) return previous;
+      return ids;
+    });
+  }, []);
+  const handleExternalRunningSessionIdsChange = useCallback((ids: Set<string>) => {
+    setExternalRunningSessionIds((previous) => {
       if (previous.size === ids.size && [...ids].every((id) => previous.has(id))) return previous;
       return ids;
     });
@@ -872,6 +879,12 @@ export function AppShell() {
     });
   }, [deliverSessionNotification, hydrateSelectedSession, selectedSession, translate]);
 
+  const handleSessionChanged = useCallback(() => {
+    // A persisted session may be owned by another Pi runtime. Refresh the
+    // sidebar metadata without treating every file append as agent completion.
+    setRefreshKey((k) => k + 1);
+  }, []);
+
   const handleAttentionNeeded = useCallback((request: BlockingExtensionUiRequest) => {
     if (selectedSession?.relation?.kind === "subagent") return;
     if (!shouldShowBrowserNotification()) return;
@@ -1148,6 +1161,7 @@ export function AppShell() {
         onBackgroundTaskDone={handleBackgroundTaskDone}
         onRunningSessionIdsChange={handleRunningSessionIdsChange}
         onSessionsChange={handleSessionsChange}
+        onExternalRunningSessionIdsChange={handleExternalRunningSessionIdsChange}
       />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
@@ -2268,9 +2282,11 @@ export function AppShell() {
               initialScrollPosition={selectedSession ? sessionScrollPositionsRef.current.get(selectedSession.id) ?? null : null}
               onScrollPositionChange={handleSessionScrollPositionChange}
               sessionRunning={Boolean(selectedSession && runningSessionIds.has(selectedSession.id))}
+              sessionExternallyRunning={Boolean(selectedSession && externalRunningSessionIds.has(selectedSession.id))}
               newSessionCwd={effectiveNewSessionCwd}
               newSessionDraftKey={newSessionDraftKey}
               onAgentEnd={handleAgentEnd}
+              onSessionChanged={handleSessionChanged}
               onAttentionNeeded={handleAttentionNeeded}
               onSessionCreated={handleSessionCreated}
               onSessionForked={handleSessionForked}

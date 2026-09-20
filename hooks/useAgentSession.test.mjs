@@ -339,6 +339,7 @@ test("uses server pagination state instead of guessing from rendered rows", () =
 
 test("keeps the selected session warm while idle and renews its lease", () => {
   assert.match(source, /sessionRunning\?: boolean/);
+  assert.match(source, /sessionExternallyRunning\?: boolean/);
   assert.match(
     source,
     /const sid = session\?\.id;[\s\S]*?if \(!sid\) return;[\s\S]*?maintainEventsConnected\(sid\)/,
@@ -350,11 +351,29 @@ test("keeps the selected session warm while idle and renews its lease", () => {
   assert.match(source, /result\.renewed === 0[\s\S]*?closeEvents\(\)[\s\S]*?maintainEventsConnected\(sid\)/);
   assert.match(source, /if \(sessionPropIdRef\.current === sid\) \{[\s\S]*?cancelEventStreamGrace\(\);[\s\S]*?return;/);
   assert.match(source, /maintainEventsConnected\(sid\)/);
+  assert.match(source, /sessionExternallyRunningRef\.current/);
   assert.doesNotMatch(source, /void connectEvents\(/);
   assert.match(chatWindowSource, /sessionRunning\?: boolean/);
-  assert.match(chatWindowSource, /session, sessionRunning, newSessionCwd/);
+  assert.match(chatWindowSource, /session, sessionRunning, sessionExternallyRunning, newSessionCwd/);
   assert.match(appShellSource, /runningSessionIds\.has\(selectedSession\.id\)/);
   assert.match(appShellSource, /onRunningSessionIdsChange=\{handleRunningSessionIdsChange\}/);
+});
+
+test("watches persisted sessions that are owned by another runtime", () => {
+  const watchSource = source.slice(
+    source.indexOf("// Sessions created by another runtime"),
+    source.indexOf("  const respondToExtensionUi = useCallback", source.indexOf("// Sessions created by another runtime")),
+  );
+
+  assert.match(watchSource, /new EventSource\(`\/api\/sessions\/\$\{encodeURIComponent\(sid\)\}\/events`\)/);
+  assert.match(watchSource, /session_changed/);
+  assert.match(watchSource, /loadSession\(sid\)/);
+  assert.match(watchSource, /sessionRunning && !sessionExternallyRunning/);
+  assert.match(watchSource, /source\.close\(\)/);
+  assert.match(source, /onSessionChanged\?: \(\) => void/);
+  assert.match(chatWindowSource, /onSessionChanged\?: \(\) => void/);
+  assert.match(chatWindowSource, /sessionExternallyRunning\?: boolean/);
+  assert.match(chatWindowSource, /onSessionChanged, onAttentionNeeded/);
 });
 
 test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", () => {

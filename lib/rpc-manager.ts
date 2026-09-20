@@ -12,6 +12,7 @@ import {
   createProjectCommandBashOperations,
   preferUserBashExtension,
 } from "./project-command-env";
+import { getLiveSubagentSession, getLiveSubagentSessionIds } from "./subagent-session-lifecycle";
 import { cacheSessionPath, getLatestModelChange, invalidateSessionListCache, readLatestSessionEntryId, resolveSessionPath } from "./session-reader";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
@@ -115,6 +116,13 @@ type AgentSessionWrapperOptions = {
   chatOnly?: boolean;
   onAgentRunComplete?: AgentRunCompleteListener;
   suppressCompletionNotifications?: boolean;
+  /**
+   * False when the inner AgentSession belongs to another host (a borrowed
+   * pi-subagents-j0k3r nested run). Destroying such a wrapper only detaches:
+   * it must not dispose the session or emit session_shutdown to its extensions,
+   * because the owning host is still driving it.
+   */
+  ownsInnerSession?: boolean;
 };
 
 const IDLE_RESET_EVENT_TYPES = new Set([
@@ -236,6 +244,7 @@ export class AgentSessionWrapper {
   private extensionBindingError: unknown = null;
   private readonly exactSystemPrompt?: () => string;
   private readonly chatOnly: boolean;
+  private readonly ownsInnerSession: boolean;
   private readonly onAgentRunComplete?: AgentRunCompleteListener;
   private readonly suppressCompletionNotifications: boolean;
   private unsubscribe: (() => void) | null = null;
@@ -252,6 +261,7 @@ export class AgentSessionWrapper {
   ) {
     this.exactSystemPrompt = options.exactSystemPrompt;
     this.chatOnly = options.chatOnly ?? false;
+    this.ownsInnerSession = options.ownsInnerSession ?? true;
     this.onAgentRunComplete = options.onAgentRunComplete;
     this.suppressCompletionNotifications = options.suppressCompletionNotifications ?? false;
     this.installExactSystemPromptContinuation();
@@ -1041,7 +1051,7 @@ export class AgentSessionWrapper {
     // EventSource errors and reconnects instead of staying OPEN on a dead wrapper.
     this.emit({ type: "session_shutdown" });
     if (this.idleTimer) clearTimeout(this.idleTimer);
-    if (this.inner.isBashRunning) this.inner.abortBash();
+    if (this.ownsInnerSession && this.inner.isBashRunning) this.inner.abortBash();
     this.unsubscribe?.();
     for (const pending of this.pendingUiResponses.values()) pending.cancel();
     for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
@@ -1051,12 +1061,23 @@ export class AgentSessionWrapper {
     this.clearExtensionWidgets(false);
 
     const finishDispose = () => {
+      if (!this.ownsInnerSession) {
+        this.onDestroyCallback?.();
+        return;
+      }
       try {
         this.inner.dispose();
       } finally {
         this.onDestroyCallback?.();
       }
     };
+
+    // A borrowed session is released without touching its extensions or
+    // lifecycle; the owning host runs session_shutdown itself.
+    if (!this.ownsInnerSession) {
+      finishDispose();
+      return;
+    }
 
     // Always emit session_shutdown before dispose, even when callers skip
     // shutdown() (process exit, direct destroy). Await when possible so
@@ -1089,6 +1110,11 @@ export class AgentSessionWrapper {
   async shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
     if (!this._alive) return;
+
+    if (!this.ownsInnerSession) {
+      this.shutdownPromise = Promise.resolve().then(() => this.destroy());
+      return this.shutdownPromise;
+    }
 
     this.shutdownPromise = (async () => {
       try {
@@ -1943,6 +1969,11 @@ export function getRunningRpcSessionIds(): string[] {
   for (const [sessionId, session] of getRegistry()) {
     if (session.isRunning()) ids.add(session.sessionId || sessionId);
   }
+  // Nested sub-agent sessions (pi-subagents-j0k3r) run inside a parent
+  // AgentSession's process and never get an RPC wrapper, so the registry above
+  // cannot report them. The j0k3r interaction registry tracks their live runs
+  // keyed by session id instead.
+  for (const id of getLiveSubagentSessionIds()) ids.add(id);
   return [...ids];
 }
 
@@ -1954,6 +1985,28 @@ export function getCompletionNotificationSuppressedRpcSessionIds(): string[] {
     }
   }
   return [...ids];
+}
+
+/**
+ * Wrap a live j0k3r nested run so Pi Web owns its steer/follow-up/prompt path
+ * without opening a second AgentSession on the same JSONL file. The nested
+ * session keeps running under its host; the wrapper only subscribes to events
+ * and forwards commands. Returns null when no live handle exists.
+ */
+function adoptLiveSubagentSession(
+  sessionId: string,
+  existing: AgentSessionWrapper | undefined,
+): { session: AgentSessionWrapper; realSessionId: string } | null {
+  if (existing?.isAlive()) return { session: existing, realSessionId: sessionId };
+  const inner = getLiveSubagentSession(sessionId);
+  if (!inner) return null;
+
+  const wrapper = new AgentSessionWrapper(inner, {
+    suppressCompletionNotifications: true,
+    ownsInnerSession: false,
+  });
+  registerRpcWrapper(wrapper);
+  return { session: wrapper, realSessionId: inner.sessionId || sessionId };
 }
 
 /**
@@ -1981,6 +2034,13 @@ export async function startRpcSession(
 
   const inflight = locks.get(sessionId);
   if (inflight) return inflight;
+
+  // A running pi-subagents-j0k3r nested run publishes its live AgentSession in
+  // the shared interaction registry. Wrap that object directly: opening a
+  // second AgentSession on the same file would go stale behind the live host
+  // and silently misdeliver prompts and steers.
+  const adopted = adoptLiveSubagentSession(sessionId, existing);
+  if (adopted) return adopted;
 
   let sessionManager: SessionManager;
   if (sessionFile) {

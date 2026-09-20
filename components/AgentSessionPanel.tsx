@@ -83,7 +83,11 @@ function AgentRow({
   const { locale, t } = useI18n();
   const relation = session.relation?.kind === "subagent" ? session.relation : null;
   const status: SubagentSessionStatus = running ? "running" : relation?.status ?? "completed";
-  const primary = main ? t("agentSwitcher.main") : relation?.description || sessionTitle(session);
+  // Prefer an explicit session name (e.g. the title pi-subagents-j0k3r writes
+  // via appendSessionInfo) over the relation description, which for external
+  // runtimes is only "agent · taskId" and would otherwise hide the title.
+  const explicitTitle = session.name?.trim() ? session.name : null;
+  const primary = main ? t("agentSwitcher.main") : explicitTitle || relation?.description || sessionTitle(session);
   const secondary = main
     ? sessionTitle(session)
     : `${relation?.profile ?? t("agentSwitcher.subagent")} · ${formatRelativeTime(session.modified, locale)}`;

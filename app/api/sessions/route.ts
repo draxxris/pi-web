@@ -11,6 +11,7 @@ import {
   getRpcSessionInfos,
   getRunningRpcSessionIds,
 } from "@/lib/rpc-manager";
+import { getUnmanagedSubagentSessionIds } from "@/lib/subagent-session-lifecycle";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,7 @@ export async function GET(req: Request) {
         sessionListVersion,
         runningSessionIds: getRunningRpcSessionIds(),
         completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
+        externalRunningSessionIds: getUnmanagedSubagentSessionIds(),
       },
       { headers: { "Cache-Control": "no-store" } },
     );

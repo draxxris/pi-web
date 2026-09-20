@@ -148,9 +148,11 @@ export type BuiltinSlashCommandResult =
 export interface UseAgentSessionOptions {
   session: SessionInfo | null;
   sessionRunning?: boolean;
+  sessionExternallyRunning?: boolean;
   newSessionCwd: string | null;
   newSessionDraftKey: string | null;
   onAgentEnd?: () => void;
+  onSessionChanged?: () => void;
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
   onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
   onSessionForked?: (newSessionId: string) => void;
@@ -288,7 +290,7 @@ type SlashCommandsResponse = {
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
-    session, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
+    session, sessionRunning, sessionExternallyRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onSessionChanged, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
   } = opts;
 
@@ -351,6 +353,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const eventStreamGraceActiveRef = useRef(false);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const sessionPropIdRef = useRef<string | null>(session?.id ?? null);
+  const sessionRunningRef = useRef(Boolean(sessionRunning));
+  const sessionExternallyRunningRef = useRef(Boolean(sessionExternallyRunning));
   const agentRunningRef = useRef(false);
   const sdkAgentActiveRef = useRef(false);
   const rpcPromptPendingRef = useRef(false);
@@ -379,6 +383,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const sessionHookMountedRef = useRef(true);
 
   sessionPropIdRef.current = session?.id ?? null;
+  sessionRunningRef.current = Boolean(sessionRunning);
+  sessionExternallyRunningRef.current = Boolean(sessionExternallyRunning);
 
   if (!eventConnectionRef.current) {
     eventConnectionRef.current = new AgentEventConnection({
@@ -390,7 +396,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         && (
           agentRunningRef.current
           || eventStreamGraceActiveRef.current
-          || sessionPropIdRef.current === sid
+          || (
+            sessionPropIdRef.current === sid
+            && !sessionExternallyRunningRef.current
+          )
         )
       ),
       readinessTimeoutMs: EVENT_STREAM_READY_TIMEOUT_MS,
@@ -822,6 +831,59 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [closeEvents, maintainEventsConnected, session?.id]);
+  // Sessions created by another runtime, such as a nested subagent, are not
+  // owned by Pi Web even when the sidebar knows that they are running. Watch
+  // their persisted JSONL file instead of starting a second AgentSession for
+  // the same file.
+  useEffect(() => {
+    const sid = session?.id;
+    if (
+      !sid
+      || agentRunning
+      || (sessionRunning && !sessionExternallyRunning)
+    ) return;
+
+    let active = true;
+    let reloadInFlight = false;
+    let reloadQueued = false;
+
+    const reload = () => {
+      if (!active || sessionIdRef.current !== sid || agentRunningRef.current) return;
+      if (reloadInFlight) {
+        reloadQueued = true;
+        return;
+      }
+      reloadInFlight = true;
+      void loadSession(sid).finally(() => {
+        reloadInFlight = false;
+        if (!active || sessionIdRef.current !== sid || agentRunningRef.current) return;
+        onSessionChanged?.();
+        if (reloadQueued) {
+          reloadQueued = false;
+          reload();
+        }
+      });
+    };
+
+    const source = new EventSource(`/api/sessions/${encodeURIComponent(sid)}/events`);
+    const handleChange = () => reload();
+    source.addEventListener("session_changed", handleChange);
+
+    return () => {
+      active = false;
+      reloadQueued = false;
+      source.removeEventListener("session_changed", handleChange);
+      source.close();
+    };
+  }, [
+    agentRunning,
+    loadSession,
+    onSessionChanged,
+    session?.id,
+    sessionExternallyRunning,
+    sessionRunning,
+  ]);
+
 
   const respondToExtensionUi = useCallback(async (
     request: ExtensionUiDialogRequest,

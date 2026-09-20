@@ -2,7 +2,7 @@ import {
   SessionManager,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { closeSync, type Dirent, fstatSync, openSync, readSync } from "fs";
+import { closeSync, type Dirent, fstatSync, openSync, readFileSync, readSync } from "fs";
 import { readdir } from "fs/promises";
 import { isAbsolute, join, normalize as normalizePath, relative, resolve as resolvePath, sep } from "path";
 import type { AgentMessage, ImageContent, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types";
@@ -13,6 +13,7 @@ import { sessionPathKey } from "./session-path";
 import { MAX_TOOL_RESULT_IMAGE_BYTES, TOOL_RESULT_IMAGE_MIMES } from "./tool-result-images";
 import { resolveProject, type ProjectInfo } from "./worktree";
 import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents";
+import { getLiveSubagentSessionIds } from "./subagent-session-lifecycle";
 import { listSessionsIncremental } from "./session-list-scanner";
 
 export { getAgentDir };
@@ -142,7 +143,7 @@ function readSessionRelationEntries(filePath: string): SessionEntry[] {
     readBoundedLines(filePath, SESSION_RELATION_MAX_BYTES, SESSION_RELATION_MAX_LINES).slice(1),
   );
   const isSubagent = prefixEntries.some((entry) => (
-    entry.type === "custom" && entry.customType === SUBAGENT_META_TYPE
+    entry.type === "custom" && (entry.customType === SUBAGENT_META_TYPE || entry.customType === SUBAGENT_SESSION_MARKER_CUSTOM_TYPE)
   ));
   if (!isSubagent) return prefixEntries;
 
@@ -150,6 +151,100 @@ function readSessionRelationEntries(filePath: string): SessionEntry[] {
     ...prefixEntries,
     ...parseSessionEntries(readBoundedTailLines(filePath, SESSION_RESULT_MAX_BYTES)),
   ];
+}
+
+/** Stable marker written by pi-subagents-j0k3r to its nested session files. */
+export const SUBAGENT_SESSION_MARKER_CUSTOM_TYPE = "pi-subagents-j0k3r:subagent-session";
+
+export interface J0k3rRunInfo {
+  sessionId: string;
+  sessionPath: string;
+  parentSessionId: string;
+  parentToolCallId: "";
+  profile: string;
+  description: string;
+  task: string;
+  runInBackground: true;
+  status: "running" | "interrupted";
+  createdAt: "";
+}
+
+/**
+ * True when entries carry the j0k3r nested-session marker. The marker is
+ * written at session creation, so even a stale in-memory entry list reliably
+ * identifies ownership without touching disk.
+ */
+export function hasJ0k3rMarker(entries: readonly SessionEntry[]): boolean {
+  return entries.some((entry) =>
+    entry.type === "custom"
+    && (entry as { customType?: unknown }).customType === SUBAGENT_SESSION_MARKER_CUSTOM_TYPE
+  );
+}
+
+/** Raw data payload of the j0k3r marker entry, or null when absent. */
+export function getJ0k3rMarkerData(entries: readonly SessionEntry[]): Record<string, unknown> | null {
+  const marker = entries.find((entry) =>
+    entry.type === "custom"
+    && (entry as { customType?: unknown }).customType === SUBAGENT_SESSION_MARKER_CUSTOM_TYPE
+  );
+  if (!marker || marker.type !== "custom") return null;
+  const data = (marker as unknown as { data?: unknown }).data;
+  return typeof data === "object" && data !== null && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : null;
+}
+
+/**
+ * Read-only relation info for a j0k3r nested session. This is display metadata
+ * only: unlike readSubagentRun it never validates resource snapshots or
+ * lifecycle entries, because j0k3r owns that lifecycle. Returns null when no
+ * marker is present or when the parent cannot be resolved (caller then falls
+ * back to an ordinary fork relation).
+ */
+export function readJ0k3rRun(
+  entries: readonly SessionEntry[],
+  sessionId: string,
+  sessionPath: string,
+  originSessionId?: string,
+  markerParentId?: string,
+  live = false,
+): J0k3rRunInfo | null {
+  const data = getJ0k3rMarkerData(entries);
+  if (!data) return null;
+  const agent = typeof data.agent === "string" && data.agent.trim() ? data.agent.trim() : "subagent";
+  const taskId = typeof data.taskId === "string" ? data.taskId : "";
+  const resolvedParentId = originSessionId ?? markerParentId;
+  if (!resolvedParentId) return null;
+  return {
+    sessionId,
+    sessionPath,
+    parentSessionId: resolvedParentId,
+    parentToolCallId: "",
+    profile: agent,
+    description: taskId ? `${agent} · ${taskId}` : agent,
+    task: taskId,
+    runInBackground: true,
+    status: live ? "running" : "interrupted",
+    createdAt: "",
+  };
+}
+
+export function isSubagentSessionFile(filePath: string): boolean {
+  try {
+    const content = readFileSync(filePath, "utf8");
+    for (const line of content.split(/\r?\n/)) {
+      if (!line.includes(SUBAGENT_SESSION_MARKER_CUSTOM_TYPE)) continue;
+      try {
+        const entry = JSON.parse(line) as { type?: string; customType?: string };
+        if (entry.type === "custom" && entry.customType === SUBAGENT_SESSION_MARKER_CUSTOM_TYPE) return true;
+      } catch {
+        // Ignore malformed or unrelated lines.
+      }
+    }
+  } catch {
+    // The caller will treat unreadable sessions as ordinary sessions.
+  }
+  return false;
 }
 
 export async function attachSessionProjectInfo(sessions: SessionInfo[]): Promise<SessionInfo[]> {
@@ -187,6 +282,7 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
   const scanned = await listSessionsIncremental();
   const pathToId = new Map<string, string>();
   for (const s of scanned) pathToId.set(sessionPathKey(s.path), s.id);
+  const liveSubagentIds = new Set(getLiveSubagentSessionIds());
 
   const sessions = scanned.map((s) => {
     cacheSessionPath(s.id, s.path);
@@ -194,7 +290,26 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
     let subagent = null;
     if (s.parentSessionPath) {
       try {
-        subagent = readSubagentRun(readSessionRelationEntries(s.path), s.id, s.path);
+        const entries = readSessionRelationEntries(s.path);
+        subagent = readSubagentRun(entries, s.id, s.path);
+        if (!subagent) {
+          const data = getJ0k3rMarkerData(entries);
+          if (data) {
+            const markerParentPath = typeof data.parentSessionPath === "string" ? data.parentSessionPath : undefined;
+            const candidate = readJ0k3rRun(
+              entries,
+              s.id,
+              s.path,
+              originSessionId,
+              markerParentPath ? pathToId.get(sessionPathKey(markerParentPath)) : undefined,
+              liveSubagentIds.has(s.id),
+            );
+            // Only nest when parent can be resolved to a known session; otherwise treat as ordinary fork.
+            if (candidate) {
+              subagent = candidate as unknown as ReturnType<typeof readSubagentRun>;
+            }
+          }
+        }
       } catch { /* malformed or concurrently removed session */ }
     }
     return {

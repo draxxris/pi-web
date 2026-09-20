@@ -124,6 +124,7 @@ interface Props {
   onBackgroundTaskDone?: () => void;
   onRunningSessionIdsChange?: (ids: Set<string>) => void;
   onSessionsChange?: (sessions: SessionInfo[]) => void;
+  onExternalRunningSessionIdsChange?: (ids: Set<string>) => void;
 }
 
 interface WorktreeEntry {
@@ -374,7 +375,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange, onExternalRunningSessionIdsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [sessionListVersion, setSessionListVersion] = useState<number | null>(null);
@@ -415,6 +416,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [changesCollapsed, setChangesCollapsed] = useState(true);
   const [explorerRefreshDone, setExplorerRefreshDone] = useState(false);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
+  const [externalRunningSessionIds, setExternalRunningSessionIds] = useState<Set<string>>(() => new Set());
   const [unreadSessionIds, setUnreadSessionIds] = useState<Set<string>>(() => loadUnreadSessionIds());
   const previousRunningSessionIdsRef = useRef<Set<string>>(new Set());
   const currentSuppressedCompletionSessionIdsRef = useRef<Set<string>>(new Set());
@@ -422,6 +424,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // Once polling has delivered a snapshot it is the source of truth for
   // running state; late /api/sessions responses must not overwrite it.
   const runningPollAuthoritativeRef = useRef(false);
+  const sessionListRefreshInFlightRef = useRef(false);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
 
@@ -497,6 +500,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         sessionListVersion: number;
         runningSessionIds?: string[];
         completionNotificationSuppressedSessionIds?: string[];
+        externalRunningSessionIds?: string[];
       };
       if (loadId !== sessionLoadIdRef.current) return;
       sessionListVersionRef.current = data.sessionListVersion;
@@ -509,6 +513,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           data.completionNotificationSuppressedSessionIds ?? [],
         );
         setRunningSessionIds(new Set(data.runningSessionIds ?? []));
+        setExternalRunningSessionIds(new Set(data.externalRunningSessionIds ?? []));
       }
       // Drop markers for deleted sessions and for subagents, whose completion
       // is intentionally silent even if an older client marked them unread.
@@ -529,6 +534,19 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       if (loadId === sessionLoadIdRef.current) setLoading(false);
     }
   }, []);
+
+  // External runtimes such as pi-subagents-j0k3r write new session files
+  // without entering Pi Web's in-process registry. While any Pi Web session
+  // is running, force a session scan so newly created child sessions appear in
+  // the sidebar without requiring a browser refresh. Coalesce overlapping
+  // scans because listAllSessions also resolves project metadata for each cwd.
+  const refreshSessionList = useCallback(() => {
+    if (sessionListRefreshInFlightRef.current) return;
+    sessionListRefreshInFlightRef.current = true;
+    void loadSessions(false, true).finally(() => {
+      sessionListRefreshInFlightRef.current = false;
+    });
+  }, [loadSessions]);
 
   const initialLoadDone = useRef(false);
   useEffect(() => {
@@ -580,16 +598,24 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           sessionListVersion: number;
           runningSessionIds?: string[];
           completionNotificationSuppressedSessionIds?: string[];
+          externalRunningSessionIds?: string[];
         };
         if (stopped || controller !== current) return;
         runningPollAuthoritativeRef.current = true;
         currentSuppressedCompletionSessionIdsRef.current = new Set(
           data.completionNotificationSuppressedSessionIds ?? [],
         );
-        setRunningSessionIds(new Set(data.runningSessionIds ?? []));
+        const runningIds = new Set(data.runningSessionIds ?? []);
+        const externalIds = new Set(data.externalRunningSessionIds ?? []);
+        setRunningSessionIds(runningIds);
+        setExternalRunningSessionIds(externalIds);
         if (data.sessionListVersion !== sessionListVersionRef.current) {
           // Reuse the invalidated cache; forcing a scan would change the version again.
           await loadSessions();
+        } else if (runningIds.size > 0 || externalIds.size > 0) {
+          // Externally owned files (j0k3r) don't bump the version through our
+          // API, so force a scan while anything is running to surface children.
+          refreshSessionList();
         }
       } catch {
         // Keep the last known state; the next visible-tab poll retries.
@@ -617,7 +643,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       controller?.abort();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [loadSessions]);
+  }, [loadSessions, refreshSessionList]);
 
   useEffect(() => {
     onRunningSessionIdsChange?.(runningSessionIds);
@@ -626,6 +652,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   useEffect(() => {
     onSessionsChange?.(allSessions);
   }, [allSessions, onSessionsChange]);
+
+  useEffect(() => {
+    onExternalRunningSessionIdsChange?.(externalRunningSessionIds);
+  }, [externalRunningSessionIds, onExternalRunningSessionIdsChange]);
 
   useEffect(() => {
     const previous = previousRunningSessionIdsRef.current;
@@ -652,7 +682,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       (id) => !allSessions.some((session) => session.id === id),
     );
     if (completedInBackground.length > 0 || hasUnlistedRunningSession) {
-      loadSessions(false, true);
+      refreshSessionList();
     }
     if (completedWithNotifications.length > 0) {
       onBackgroundTaskDone?.();
@@ -664,7 +694,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         (id) => currentSuppressedCompletionSessionIdsRef.current.has(id) || knownSubagentIds.has(id),
       ),
     );
-  }, [runningSessionIds, selectedSessionId, allSessions, loadSessions, onBackgroundTaskDone]);
+  }, [runningSessionIds, selectedSessionId, allSessions, refreshSessionList, onBackgroundTaskDone]);
 
   useEffect(() => {
     if (!selectedSessionId) return;

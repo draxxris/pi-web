@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
+import { getUnmanagedSubagentSessionIds } from "@/lib/subagent-session-lifecycle";
 import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
+
+// Commands that inject a turn. A run whose live session handle is unavailable
+// would receive them in a stale pi-web wrapper instead of the running host —
+// misdelivered at best, file contention at worst.
+const TURN_INJECTION_COMMANDS = new Set(["prompt", "steer", "follow_up"]);
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -22,6 +28,15 @@ export async function POST(
       throw new Error("toolNames must be an array of strings");
     }
     const toolNames = requestedToolNames as string[] | undefined;
+
+    if (commandType !== undefined && TURN_INJECTION_COMMANDS.has(commandType)) {
+      if (getUnmanagedSubagentSessionIds().includes(id)) {
+        return NextResponse.json({
+          error: "Session is running under an external subagent host; prompt the parent session instead",
+          code: "externally_running",
+        }, { status: 409 });
+      }
+    }
 
     // Fast path: already-running session
     const existing = getRpcSession(id);
