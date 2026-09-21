@@ -150,7 +150,9 @@ test("deleting an unpersisted session shuts down its runtime and invalidates cac
   }
 });
 
-test("session listing merges live registry snapshots and honors force refresh", () => {
+test("session listing supports cheap summaries and honors force refresh", () => {
+  assert.match(listRoute, /searchParams\.get\("summary"\) === "1"/);
+  assert.match(listRoute, /summary\s*\n?\s*\? listSessionSummaries\(\)/);
   assert.match(listRoute, /searchParams\.get\("force"\) === "1"/);
   assert.match(listRoute, /listAllSessions\(\{ force \}\)/);
   assert.match(listRoute, /attachSessionProjectInfo\(getRpcSessionInfos\(\)\)/);
