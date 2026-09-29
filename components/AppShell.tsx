@@ -17,6 +17,7 @@ import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
 import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentMiniStrip } from "./AgentMiniStrip";
+import { SubscriptionQuotaButton, SubscriptionQuotaPanel } from "./SubscriptionQuotaPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
 import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
 import { SessionChatPanel } from "./SessionChatPanel";
@@ -438,7 +439,7 @@ export function AppShell() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "debug" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "quota" | "session" | "debug" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
@@ -458,7 +459,7 @@ export function AppShell() {
   }, [rightPanelFullWidth]);
 
   const toggleTopPanel = useCallback((
-    panel: "agents" | "branches" | "system" | "tools" | "session" | "debug",
+    panel: "agents" | "branches" | "system" | "tools" | "quota" | "session" | "debug",
     keepMobileToolbarOpen = false,
   ) => {
     if (isMobile) setSidebarOpen(false);
@@ -2115,6 +2116,15 @@ export function AppShell() {
           </svg>
           {!mobile && <span>{translate("tools.label")}</span>}
         </button>
+        <SubscriptionQuotaButton
+          active={activeTopPanel === "quota"}
+          enabled={showChat}
+          mobile={mobile}
+          mobileButtonSize={TOP_BAR_ICON_BUTTON_SIZE}
+          onClick={() => toggleTopPanel("quota", mobile)}
+          label={translate("quota.label")}
+          title={translate("quota.title")}
+        />
       </div>
     );
   };
@@ -2672,6 +2682,7 @@ export function AppShell() {
                   translate={translate}
                 />
               )}
+              <SubscriptionQuotaPanel open={activeTopPanel === "quota"} />
               {activeTopPanel === "session" && (
                 <div className="session-info-popover" style={{
                   background: "var(--bg-panel)",
