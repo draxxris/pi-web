@@ -1,8 +1,15 @@
 import { NextResponse } from "next/server";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { isProviderUsageId, queryProviderUsage } from "@/lib/provider-usage";
-
+import { getProviderUsageVisibilityWithAuth, isProviderUsageId, queryProviderUsage } from "@/lib/provider-usage";
+import { PROVIDER_USAGE_IDS } from "@/lib/provider-usage-ids";
 export const dynamic = "force-dynamic";
+
+export async function GET(request: Request) {
+  if (!isApiRequestAllowed(request)) return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
+  const visibility = await getProviderUsageVisibilityWithAuth();
+  const providerIds = PROVIDER_USAGE_IDS.filter((id) => visibility[id] !== false);
+  return NextResponse.json({ providerIds });
+}
 
 export async function POST(request: Request) {
   if (!isApiRequestAllowed(request)) return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
