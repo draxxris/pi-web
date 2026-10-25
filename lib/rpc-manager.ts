@@ -1034,6 +1034,10 @@ export class AgentSessionWrapper {
           thinkingLevel: this.inner.agent.state?.thinkingLevel ?? "off",
           extensionStatuses: this.getExtensionStatuses(),
           extensionWidgets: this.getExtensionWidgets(),
+          // The commands this session's extensions registered, by invocation name. A
+          // composer button for an extension (cache-warm's toggle) needs the command's
+          // presence to know the extension is loaded; a Chat-only session registers none.
+          extensionCommands: this.extensionCommandCandidates().map((command) => command.name),
         };
       }
 

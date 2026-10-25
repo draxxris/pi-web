@@ -3,7 +3,8 @@
 import React, { memo, useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import type { SkillsResponse } from "@/lib/api-types";
-import type { TextContent, UserMessage } from "@/lib/types";
+import type { TextContent, UserMessage, ExtensionStatusItem } from "@/lib/types";
+import { cacheWarmToggleCommand, readCacheWarmState } from "@/lib/cache-warm";
 import {
   clearDraft,
   getDraft,
@@ -90,6 +91,10 @@ interface Props {
   onRecallQueue?: () => void;
   slashCommands?: SlashCommandInfo[];
   slashCommandsLoading?: boolean;
+  /** The commands this session's extensions registered; the cache-warm toggle needs its own. */
+  extensionCommands?: string[];
+  /** The live session's extension statuses, as the status shelf shows them. */
+  extensionStatuses?: ExtensionStatusItem[];
   onLoadSlashCommands?: () => Promise<SlashCommandInfo[]> | SlashCommandInfo[];
   onBuiltinCommand?: (message: string) => Promise<BuiltinSlashCommandResult>;
   soundEnabled?: boolean;
@@ -671,6 +676,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   savedDefaultThinkingLevel, onSetDefaultThinkingLevel,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
+  extensionCommands, extensionStatuses,
   onBuiltinCommand,
   soundEnabled, onSoundToggle, onAudioUnlock,
   onPromptWithStreamingBehavior,
@@ -1689,6 +1695,8 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   })();
   const rawToolPresetLabel = Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "configured"))?.[0] ?? "configured";
   const toolPresetLabel = rawToolPresetLabel === "chat-only" ? t("chat.chatOnly") : rawToolPresetLabel;
+  // Only for a session whose cache-warm extension loaded (see lib/cache-warm.ts).
+  const cacheWarm = readCacheWarmState(extensionCommands, extensionStatuses);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -2733,6 +2741,52 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                   </div>
                 )}
               </div>
+            )}
+
+            {cacheWarm.installed && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isStreaming) return;
+                  onSend(cacheWarmToggleCommand(cacheWarm.enabled));
+                }}
+                disabled={isStreaming}
+                aria-pressed={cacheWarm.enabled}
+                title={cacheWarm.enabled
+                  ? `${cacheWarm.statusText ?? t("chat.cacheWarmOn")} · ${t("chat.cacheWarmDisable")}`
+                  : t("chat.cacheWarmEnable")}
+                aria-label={cacheWarm.enabled ? t("chat.cacheWarmDisable") : t("chat.cacheWarmEnable")}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: isMobile ? 2 : 5,
+                  padding: isMobile ? "0 2px" : "8px 12px",
+                  width: isMobile ? "auto" : undefined,
+                  height: isMobile ? 24 : 32,
+                  background: "none",
+                  border: "none",
+                  borderRadius: isMobile ? 6 : 9,
+                  color: cacheWarm.enabled ? "var(--accent)" : "var(--text-muted)",
+                  cursor: isStreaming ? "not-allowed" : "pointer",
+                  fontSize: 12,
+                  opacity: isStreaming ? 0.5 : 1,
+                  transition: "background 0.12s, color 0.12s",
+                }}
+                onMouseEnter={(e) => {
+                  if (isStreaming) return;
+                  e.currentTarget.style.background = "var(--bg-hover)";
+                  e.currentTarget.style.color = cacheWarm.enabled ? "var(--accent)" : "var(--text)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "none";
+                  e.currentTarget.style.color = cacheWarm.enabled ? "var(--accent)" : "var(--text-muted)";
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill={cacheWarm.enabled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+                </svg>
+                {(!isMobile || controlsMenuOpen) && (
+                  <span style={{ whiteSpace: "nowrap" }}>{cacheWarm.enabled ? t("chat.cacheWarmOn") : t("chat.cacheWarmOff")}</span>
+                )}
+              </button>
             )}
 
             {(!isStreaming || isCompacting) && onCompact && (

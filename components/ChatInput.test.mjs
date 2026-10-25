@@ -13,6 +13,7 @@ const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, RUN_END_CLICK_GUARD_MS, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, isRunEndStrayClick, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, replaceLinksWithMarkdown, replaceTextareaRange, shouldCompressImageFile, stacksComposerLayout, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
 const { isBareMcpCommand } = await jiti.import("@/lib/mcp-command");
+const { cacheWarmToggleCommand } = await jiti.import("@/lib/cache-warm");
 const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 // As ChatInput.tsx imports it: on Windows jiti loads "@/lib/draft-store.ts"
 // as a second copy, and ChatInput would never see the drafts set here (#1211).
@@ -1029,4 +1030,38 @@ test("selector rows keep the default star and the floating save button in one gu
   const active = row({ active: true });
   assert.match(active, /aria-selected="true"/);
   assert.doesNotMatch(active, /border-left/);
+});
+
+test("the cache-warm toggle follows the session's own extension state", () => {
+  const render = (props) => renderToStaticMarkup(
+    React.createElement(I18nProvider, null, React.createElement(ChatInput, {
+      onSend() {}, onAbort() {}, isStreaming: false, ...props,
+    })),
+  );
+
+  // A session that did not load the extension (a Chat-only session registers no
+  // commands) gets no toggle: the button is never a guess from installed packages.
+  const bare = render({});
+  assert.doesNotMatch(bare, /aria-pressed=/);
+  assert.doesNotMatch(bare, />Warm/);
+
+  // Registered but not warming: the extension clears its status when it is off.
+  const off = render({ extensionCommands: ["cache-warm"] });
+  assert.match(off, /aria-pressed="false"/);
+  assert.match(off, /title="Keep the prompt cache warm \(sends billable turns\)"/);
+  assert.match(off, />Warm off<\/span>/);
+
+  // The status alone is enough, for a page whose state read raced the command
+  // list, and its text is the detail the shelf shows.
+  const on = render({
+    extensionStatuses: [{ key: "cache-alive-warm", text: "warm 3m12s · 4 hits · $0.01" }],
+  });
+  assert.match(on, /aria-pressed="true"/);
+  assert.match(on, /title="warm 3m12s · 4 hits · \$0.01 · Stop keeping the prompt cache warm"/);
+  assert.match(on, />Warm<\/span>/);
+
+  // Bare /cache-warm opens a settings panel in pi's TUI, so the toggle names the
+  // state it switches to.
+  assert.equal(cacheWarmToggleCommand(false), "/cache-warm on");
+  assert.equal(cacheWarmToggleCommand(true), "/cache-warm off");
 });
