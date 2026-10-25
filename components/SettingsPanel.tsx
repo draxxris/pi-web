@@ -33,7 +33,7 @@ import { SkillsConfig } from "./SkillsConfig";
 import { ScheduledPromptsConfig } from "./ScheduledPromptsConfig";
 import { AgentsConfig } from "./AgentsConfig";
 import { PluginsConfig } from "./PluginsConfig";
-import { McpConfig } from "./McpConfig";
+import { McpSettings } from "./McpSettings";
 import { ConfigButton, ConfigSwitch } from "./SettingsUi";
 import { FontSettings } from "./FontSettings";
 
@@ -629,7 +629,7 @@ export function SettingsPanel({
           {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
           {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
           {/* No project needed: the global mcp.json is listed alone, and a project adds its group. */}
-          {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
+          {sectionHost("mcp", <McpSettings embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
           {sectionHost("schedule", <ScheduledPromptsConfig embedded sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />)}
         </main>
       </div>
