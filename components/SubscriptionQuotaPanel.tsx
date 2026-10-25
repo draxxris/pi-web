@@ -79,7 +79,8 @@ export function SubscriptionQuotaButton({
   active: boolean;
   enabled: boolean;
   mobile: boolean;
-  mobileButtonSize: number;
+  /** A CSS length: AppShell passes the shared top-bar var, a number also works. */
+  mobileButtonSize: number | string;
   onClick: () => void;
   label: string;
   title: string;

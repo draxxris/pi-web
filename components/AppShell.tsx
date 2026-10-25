@@ -96,9 +96,9 @@ type AutoNameStatus =
 
 // app/globals.css: 36px, 44px on a phone or touch screen.
 const TOP_BAR_ICON_BUTTON_SIZE = "var(--top-bar-height)";
-// The chat's own top bar stays compact on a phone: a finger's 44px there costs
-// the conversation a line and a half (02a7cad).
-const MOBILE_TOP_BAR_SIZE = "28px";
+// The chat's own top bar redefines that var on a phone (02a7cad): a finger's
+// 44px bar costs the conversation a line and a half of height.
+const MOBILE_TOP_BAR_SIZE = 28;
 const AGENT_PANEL_WIDTH = 420;
 // pi's built-in tools that never change a file; any other tool may (#1144).
 const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
@@ -2348,7 +2348,7 @@ export function AppShell() {
           // With a chat the Debug button is right-aligned instead (renderDebugButton).
           marginLeft: !mobile && !showChat ? "auto" : 0,
           display: "flex", alignItems: "center", justifyContent: "center",
-          width: mobile ? MOBILE_TOP_BAR_SIZE : TOP_BAR_ICON_BUTTON_SIZE, height: mobile ? MOBILE_TOP_BAR_SIZE : TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+          width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
           visibility: covered ? "hidden" : "visible",
           pointerEvents: covered ? "none" : "auto",
           background: rightPanelOpen ? "var(--bg-selected)" : "none",
@@ -2511,14 +2511,23 @@ export function AppShell() {
       <div inert={rightPanelFullWidth} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar with sidebar toggle */}
         <div ref={topBarRef} style={{ flexShrink: 0, background: "var(--bg-panel)" }}>
-        <div style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "1px solid var(--border)", height: isMobile ? `calc(${MOBILE_TOP_BAR_SIZE} + env(safe-area-inset-top))` : "calc(var(--top-bar-height) + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}>
+        <div style={{
+          // A phone's chat keeps a compact bar (02a7cad) while the sidebar's
+          // toolbar row and the file panel keep the 44px finger size: the var
+          // is redefined here, over this bar's own subtree only.
+          ...(isMobile ? { "--top-bar-height": `${MOBILE_TOP_BAR_SIZE}px` } : {}),
+          display: "flex", alignItems: "center", position: "relative",
+          borderBottom: "1px solid var(--border)",
+          height: "calc(var(--top-bar-height) + env(safe-area-inset-top))",
+          paddingTop: "env(safe-area-inset-top)",
+        } as React.CSSProperties}>
           <button
             onClick={handleSidebarToggle}
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
              aria-label={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
-              width: isMobile ? MOBILE_TOP_BAR_SIZE : TOP_BAR_ICON_BUTTON_SIZE, height: isMobile ? MOBILE_TOP_BAR_SIZE : TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+              width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
               background: "none", border: "none", borderRight: "1px solid var(--border)",
               color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
             }}
@@ -2562,7 +2571,7 @@ export function AppShell() {
                     position: "relative",
                     zIndex: mobileToolbarMoreOpen ? 21 : undefined,
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    width: MOBILE_TOP_BAR_SIZE, height: MOBILE_TOP_BAR_SIZE, padding: 0,
+                    width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
                     background: mobileToolbarMoreOpen ? "var(--bg-selected)" : "none",
                     border: "none", borderRight: "1px solid var(--border)",
                     color: mobileToolbarMoreOpen ? "var(--text)" : "var(--text-muted)",
@@ -2596,7 +2605,7 @@ export function AppShell() {
                     right: 0,
                     bottom: 0,
                     // Right of the Agents and More buttons, which stay in place.
-                    left: `calc(2 * ${MOBILE_TOP_BAR_SIZE})`,
+                    left: `calc(2 * ${TOP_BAR_ICON_BUTTON_SIZE})`,
                     zIndex: 20,
                     display: "flex",
                     alignItems: "stretch",
