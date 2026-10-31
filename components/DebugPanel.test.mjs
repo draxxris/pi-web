@@ -728,15 +728,21 @@ test("the Debug button only toggles its panel, left of the session stats", () =>
   assert.match(button, /aria-label=\{translate\("debug\.title"\)\}/);
   assert.match(button, /aria-pressed=\{open\}/);
   assert.match(button, /data-mobile-toolbar-action=\{mobile \? "debug" : undefined\}/);
-  assert.match(button, /if \(!showChat\) return null;/);
+  assert.match(button, /if \(!showChat \|\| !topBarButtons\.debug\) return null;/, "hidden by Settings › General › Top bar, and without a chat");
   assert.notEqual(enLocale.messages["debug.title"], enLocale.messages["session.title"], "e2e finds the stats button by its own name");
 
-  // Desktop: after the chat's actions, right before the stats, taking the free space.
-  assert.match(shellSource, /\{renderChatToolbarActions\(false\)\}\s*\{renderDebugButton\(false\)\}\s*\{renderSessionStatsButton\(false\)\}/);
-  assert.match(button, /marginLeft: mobile \? 0 : "auto"/);
+  // Desktop: after the chat's actions, right before the stats. The bar's free space is a spacer
+  // of its own, not the Debug button's, so hiding Debug leaves the stats at the right edge.
+  const desktopBar = between(shellSource, "{renderProjectTrustWarning(false)}", "{!isMobile && renderMainFileToggle(false)}");
+  assert.match(
+    desktopBar,
+    /\{renderChatToolbarActions\(false\)\}[\s\S]*?data-top-bar-spacer="true"[\s\S]*?\{renderDebugButton\(false\)\}\s*\{renderSessionStatsButton\(false\)\}/,
+  );
+  assert.match(button, /marginLeft: 0,/, "the button itself takes no free space");
   const stats = between(shellSource, "const renderSessionStatsButton = (mobile: boolean) => {", "const renderDebugButton");
   assert.match(stats, /\n\s*marginLeft: 0,/);
-  assert.match(shellSource, /marginLeft: !mobile && !showChat \? "auto" : 0,/);
+  assert.doesNotMatch(shellSource, /marginLeft: !mobile && !showChat/, "the file toggle no longer takes the free space by a chat condition");
+  assert.match(desktopBar, /<div data-top-bar-spacer="true" aria-hidden="true" style=\{\{ flex: 1, minWidth: 0 \}\} \/>/);
   // Phones: before the stats on a wide one, in the "more" overlay on a narrow one.
   assert.match(shellSource, /\{!isNarrowMobile && renderChatToolbarActions\(true\)\}\s*\{!isNarrowMobile && renderDebugButton\(true\)\}\s*\{renderSessionStatsButton\(true\)\}/);
   assert.match(shellSource, /\{renderChatToolbarActions\(true\)\}\s*\{renderDebugButton\(true\)\}\s*<\/div>/);

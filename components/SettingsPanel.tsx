@@ -16,6 +16,7 @@ import {
 } from "@/hooks/useChatAppearance";
 import { useEnterSendMode, setEnterSendMode } from "@/hooks/useEnterSendMode";
 import { useFilesPlacement, setFilesPlacement } from "@/hooks/useFilesPlacement";
+import { useTopBarButtons, setTopBarButton } from "@/hooks/useTopBarButtons";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { clearStoredDrafts } from "@/lib/draft-store";
 import type { ProjectTrustStatus, ToolSettingsResponse } from "@/lib/api-types";
@@ -87,6 +88,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const { width: chatContentWidth, setWidth: setChatContentWidth, fontSize, setFontSize } = useChatAppearance();
   const enterSendMode = useEnterSendMode();
   const filesPlacement = useFilesPlacement();
+  const topBarButtons = useTopBarButtons();
   const [shellSettings, setShellSettings] = useState<ToolSettingsResponse | null>(null);
   const [shellSaving, setShellSaving] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
@@ -474,6 +476,31 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
           {builtinToolsError && <p role="alert" className="settings-general-error">{builtinToolsError}</p>}
         </section>
       )}
+
+      <section className="settings-general-section">
+        <h3 className="settings-general-heading">{t("settings.topBar")}</h3>
+        <div className="settings-chat-options">
+          <div className="settings-chat-option settings-chat-switch-option">
+            <span>{t("settings.topBarHistory")}</span>
+            <ConfigSwitch
+              checked={topBarButtons.history}
+              label={t("settings.topBarHistory")}
+              describedBy="settings-top-bar-description"
+              onChange={(visible) => setTopBarButton("history", visible)}
+            />
+          </div>
+          <div className="settings-chat-option settings-chat-switch-option">
+            <span>{t("settings.topBarDebug")}</span>
+            <ConfigSwitch
+              checked={topBarButtons.debug}
+              label={t("settings.topBarDebug")}
+              describedBy="settings-top-bar-description"
+              onChange={(visible) => setTopBarButton("debug", visible)}
+            />
+          </div>
+        </div>
+        <p id="settings-top-bar-description" className="settings-general-description">{t("settings.topBarDescription")}</p>
+      </section>
 
       {shellSettings?.isWindows && (
         <section className="settings-general-section">

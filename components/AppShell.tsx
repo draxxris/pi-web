@@ -30,6 +30,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
+import { useTopBarButtons } from "@/hooks/useTopBarButtons";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
 import { getFileName } from "@/lib/file-paths";
@@ -118,6 +119,8 @@ export function AppShell() {
   useTheme();
   // Restore fonts even when Settings and the chat composer have not been opened.
   useFontPreferences();
+  // Full history and Debug, each hideable per browser from Settings › General.
+  const topBarButtons = useTopBarButtons();
   const { locale, t: translate } = useI18n();
   const isMobile = useIsMobile();
   const isNarrowMobile = useIsNarrowMobile();
@@ -457,6 +460,11 @@ export function AppShell() {
   useEffect(() => {
     if (rightPanelFullWidth) setActiveTopPanel(null);
   }, [rightPanelFullWidth]);
+
+  // Hiding the Debug button from Settings takes its panel with it.
+  useEffect(() => {
+    if (!topBarButtons.debug) setActiveTopPanel((panel) => panel === "debug" ? null : panel);
+  }, [topBarButtons.debug]);
 
   const toggleTopPanel = useCallback((
     panel: "agents" | "branches" | "system" | "tools" | "quota" | "session" | "debug",
@@ -1865,67 +1873,69 @@ export function AppShell() {
     if (!mobile && !showChat) return null;
     return (
       <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-        <button
-          type="button"
-          onClick={() => {
-            handleViewFullHistory();
-            if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
-          }}
-          disabled={!selectedSession}
-          title={selectedSession ? translate("history.full") : translate("history.unsaved")}
-          aria-label={translate("history.full")}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%",
-            padding: mobile ? 0 : "0 12px",
-            background: "none",
-            border: "none",
-            borderTop: "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-            cursor: selectedSession ? "pointer" : "not-allowed",
-            opacity: selectedSession ? 1 : 0.45,
-            flexShrink: 0,
-            fontSize: 11,
-            whiteSpace: "nowrap",
-            transition: "color 0.1s, background 0.1s, opacity 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (!selectedSession) return;
-            event.currentTarget.style.color = "var(--text)";
-            event.currentTarget.style.background = "var(--bg-hover)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = selectedSession ? "var(--text-muted)" : "var(--text-dim)";
-            event.currentTarget.style.background = "none";
-          }}
-          data-mobile-toolbar-action={mobile ? "history" : undefined}
-        >
-          <svg
-            width={mobile ? 16 : 12}
-            height={mobile ? 16 : 12}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{
-              color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-              flexShrink: 0,
+        {topBarButtons.history && (
+          <button
+            type="button"
+            onClick={() => {
+              handleViewFullHistory();
+              if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
             }}
-            aria-hidden="true"
+            disabled={!selectedSession}
+            title={selectedSession ? translate("history.full") : translate("history.unsaved")}
+            aria-label={translate("history.full")}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+              height: "100%",
+              padding: mobile ? 0 : "0 12px",
+              background: "none",
+              border: "none",
+              borderTop: "2px solid transparent",
+              borderRight: "1px solid var(--border)",
+              color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
+              cursor: selectedSession ? "pointer" : "not-allowed",
+              opacity: selectedSession ? 1 : 0.45,
+              flexShrink: 0,
+              fontSize: 11,
+              whiteSpace: "nowrap",
+              transition: "color 0.1s, background 0.1s, opacity 0.1s",
+            }}
+            onMouseEnter={(event) => {
+              if (!selectedSession) return;
+              event.currentTarget.style.color = "var(--text)";
+              event.currentTarget.style.background = "var(--bg-hover)";
+            }}
+            onMouseLeave={(event) => {
+              event.currentTarget.style.color = selectedSession ? "var(--text-muted)" : "var(--text-dim)";
+              event.currentTarget.style.background = "none";
+            }}
+            data-mobile-toolbar-action={mobile ? "history" : undefined}
           >
-            <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M12 7v5l3 2" />
-          </svg>
-          {!mobile && <span>{translate("history.label")}</span>}
-        </button>
+            <svg
+              width={mobile ? 16 : 12}
+              height={mobile ? 16 : 12}
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{
+                color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
+                flexShrink: 0,
+              }}
+              aria-hidden="true"
+            >
+              <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+              <path d="M3 3v5h5" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+            {!mobile && <span>{translate("history.label")}</span>}
+          </button>
+        )}
         {(() => {
           // 上下文压缩后当前消息可能不再包含 user 消息，需同时参考会话文件的消息总数。
           const hasMessages = Boolean(
@@ -2183,7 +2193,7 @@ export function AppShell() {
         className={mobile ? "mobile-session-stats" : undefined}
         data-mobile-toolbar-stats={mobile ? "true" : undefined}
         style={{
-          // The Debug button before it takes the free space (renderDebugButton).
+          // The bar's spacer before it takes the free space, not the Debug button.
           marginLeft: 0,
           display: "flex", alignItems: "center", justifyContent: "flex-end",
           flex: mobile ? 1 : undefined,
@@ -2289,10 +2299,10 @@ export function AppShell() {
     );
   };
 
-  // Icon only, right of the chat's actions; on a desktop it takes the bar's free space, so it
-  // sits left of the session stats. It only opens or closes its panel: nothing is loaded here.
+  // Icon only, right of the chat's actions; on a desktop it sits left of the session stats,
+  // after the bar's free space. It only opens or closes its panel: nothing is loaded here.
   const renderDebugButton = (mobile: boolean) => {
-    if (!showChat) return null;
+    if (!showChat || !topBarButtons.debug) return null;
     const open = activeTopPanel === "debug";
     return (
       <button
@@ -2303,7 +2313,7 @@ export function AppShell() {
         aria-label={translate("debug.title")}
         aria-pressed={open}
         style={{
-          marginLeft: mobile ? 0 : "auto",
+          marginLeft: 0,
           display: "flex", alignItems: "center", justifyContent: "center",
           width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
           background: open ? "var(--bg-selected)" : "none",
@@ -2345,8 +2355,8 @@ export function AppShell() {
         aria-label={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
         data-mobile-toolbar-file={mobile ? "true" : undefined}
         style={{
-          // With a chat the Debug button is right-aligned instead (renderDebugButton).
-          marginLeft: !mobile && !showChat ? "auto" : 0,
+          // The desktop bar's spacer before it takes the free space.
+          marginLeft: 0,
           display: "flex", alignItems: "center", justifyContent: "center",
           width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
           visibility: covered ? "hidden" : "visible",
@@ -2628,6 +2638,9 @@ export function AppShell() {
             <>
               {renderProjectTrustWarning(false)}
               {renderChatToolbarActions(false)}
+              {/* The bar's own free space, not a button's: it stays whether or not the Debug button
+                  shows, so the stats and the file toggle keep to the right edge either way. */}
+              <div data-top-bar-spacer="true" aria-hidden="true" style={{ flex: 1, minWidth: 0 }} />
               {renderDebugButton(false)}
               {renderSessionStatsButton(false)}
             </>
@@ -2887,7 +2900,7 @@ export function AppShell() {
                   )}
                 </div>
               )}
-              {activeTopPanel === "debug" && (
+              {activeTopPanel === "debug" && topBarButtons.debug && (
                 <DebugPanelBoundary fallback={translate("debug.failed")}>
                   <DebugPanel
                     readerRef={debugSnapshotReaderRef}
