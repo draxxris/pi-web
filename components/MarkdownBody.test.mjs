@@ -463,3 +463,27 @@ test("shows a user message's HTML as the text typed, like pi's TUI", () => {
   assert.match(mixed, /&lt;p&gt;code&lt;\/p&gt;/);
   assert.match(renderMarkdown("normal <kbd>Ctrl</kbd>"), /<kbd>Ctrl<\/kbd>/);
 });
+
+test("carries the session on a chat image, so a file outside the roots displays", () => {
+  // A reply that wrote /tmp/shot.png shows it; the file route reads a path
+  // outside the browsable roots only when the session it is asked for mentions
+  // that exact path (`lib/session-file-references-core.ts`). Without the
+  // session, the image answers 403 and the chat shows a broken picture.
+  const sessionId = "01a18db3-6322-71f5-ba92-49ca0d29dc5d";
+  assert.match(
+    renderMarkdown("![shot](/tmp/shot.png)", { sessionId }),
+    /<img[^>]+src="\/api\/files\/tmp\/shot\.png\?type=read&amp;sessionId=01a18db3-6322-71f5-ba92-49ca0d29dc5d"/,
+  );
+  // A clip the same reply wrote plays from the same URL.
+  assert.match(
+    renderMarkdown("![take](/tmp/take.wav)", { sessionId }),
+    /<audio [^>]*src="\/api\/files\/tmp\/take\.wav\?type=read&amp;sessionId=01a18db3-6322-71f5-ba92-49ca0d29dc5d"/,
+  );
+  // Text with no session (a skill's instructions) asks for the file alone.
+  assert.doesNotMatch(renderMarkdown("![shot](/tmp/shot.png)"), /sessionId/);
+  // A remote image keeps its own address either way.
+  assert.match(
+    renderMarkdown("![logo](https://example.com/logo.png)", { sessionId }),
+    /<img[^>]+src="https:\/\/example\.com\/logo\.png"/,
+  );
+});

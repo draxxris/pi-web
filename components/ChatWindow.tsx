@@ -1084,7 +1084,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {extensionDialog && (
-          <ExtensionDialog key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />
+          <ExtensionDialog key={extensionDialog.id} request={extensionDialog} sessionId={session?.id ?? sessionIdRef.current ?? undefined} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />
         )}
         {extensionCustomUi && (
           <ExtensionCustomPanel key={extensionCustomUi.id} request={extensionCustomUi} waitingCount={waitingExtensionCustomUiCount} onInput={sendExtensionCustomInput} />
@@ -1709,10 +1709,13 @@ function ExtensionSizeIcon({ expanded }: { expanded: boolean }) {
 
 function ExtensionDialog({
   request,
+  sessionId,
   waitingCount,
   onRespond,
 }: {
   request: ExtensionDialogRequest;
+  /** The session the dialog belongs to: its markdown media may live outside the browsable roots. */
+  sessionId?: string;
   /** Further dialogs queued behind this one; each opens after this one is answered. */
   waitingCount: number;
   onRespond: (request: ExtensionDialogRequest, response: { value: string } | { confirmed: boolean } | { cancelled: true }) => void;
@@ -1930,7 +1933,7 @@ function ExtensionDialog({
           }}
         >
           {request.method === "confirm" && (
-            <MarkdownBody>{request.message}</MarkdownBody>
+            <MarkdownBody sessionId={sessionId}>{request.message}</MarkdownBody>
           )}
           {request.method === "select" && (
             <div
@@ -1980,7 +1983,7 @@ function ExtensionDialog({
                   }}
                 >
                   <div inert>
-                    <MarkdownBody>{option}</MarkdownBody>
+                    <MarkdownBody sessionId={sessionId}>{option}</MarkdownBody>
                   </div>
                 </div>
               ))}

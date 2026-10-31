@@ -5,7 +5,7 @@ import ReactMarkdown, { type Components, type ExtraProps } from "react-markdown"
 import { useI18n } from "@/hooks/useI18n";
 import { copyText } from "@/lib/clipboard";
 import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
-import { encodeFilePathForApi } from "@/lib/file-paths";
+import { fileReadApiUrl } from "@/lib/file-paths";
 import { isAudioPath, isVideoPath } from "@/lib/file-types";
 import { isExternalMarkdownHref, jumpToMarkdownFragment, markdownAppUrlTransform, markdownDocumentRehypePlugins, markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, markdownUserRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
 import { splitMarkdownBlocks } from "@/lib/markdown-blocks";
@@ -21,6 +21,8 @@ interface MarkdownBodyProps {
   isStreaming?: boolean;
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
+  /** The session this text belongs to: its media may live outside the browsable roots. */
+  sessionId?: string;
   /** A document reader's own links: relative paths and `#headings` stay in the reader. */
   onNavigateLink?: (href: string) => void;
   /** Text the user typed: every line ending is a line break and raw HTML shows as text, as in pi's TUI. */
@@ -31,15 +33,17 @@ function MarkdownImage({
   src,
   alt,
   cwd,
+  sessionId,
   ...props
-}: ComponentProps<"img"> & ExtraProps & { cwd?: string }) {
+}: ComponentProps<"img"> & ExtraProps & { cwd?: string; sessionId?: string }) {
   const insideLink = useContext(MarkdownLinkContext);
   delete props.node;
   const href = typeof src === "string" ? src : undefined;
   const filePath = href ? resolveLocalFileHref(href, cwd) : null;
-  const mediaSrc = filePath
-    ? `/api/files/${encodeFilePathForApi(filePath)}?type=read`
-    : href;
+  // A reply may show a file it wrote outside the project, as it links to one:
+  // the session authorizes that read (`fileReadApiUrl`), which is what makes
+  // `/tmp/shot.png` display instead of a 403.
+  const mediaSrc = filePath ? fileReadApiUrl(filePath, sessionId) : href;
   // `![](take.wav)` is how a model shows a sound or clip it made, and an <img>
   // cannot play it. The file API already streams both with range requests.
   const mediaPath = filePath ?? href?.split(/[?#]/, 1)[0] ?? "";
@@ -107,7 +111,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ markdown, remarkPlugins, url
   );
 });
 
-export const MarkdownBody = memo(function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onNavigateLink, keepLineBreaks }: MarkdownBodyProps) {
+export const MarkdownBody = memo(function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onNavigateLink, keepLineBreaks, sessionId }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
   // A streaming reply grows by a few characters per chunk; parsing all of it
   // each time made a long reply quadratic. Its finished blocks keep their
@@ -202,7 +206,7 @@ export const MarkdownBody = memo(function MarkdownBody({ children, className, is
       );
     },
     img(props) {
-      return <MarkdownImage cwd={cwd} {...props} />;
+      return <MarkdownImage cwd={cwd} sessionId={sessionId} {...props} />;
     },
     ol({ node, start, style, ...props }) {
       // An outside marker wider than the list's left padding is clipped by
@@ -227,7 +231,7 @@ export const MarkdownBody = memo(function MarkdownBody({ children, className, is
         </div>
       );
     },
-  }), [cwd, isStreaming, onOpenFile, onNavigateLink]);
+  }), [cwd, isStreaming, onOpenFile, onNavigateLink, sessionId]);
 
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>
