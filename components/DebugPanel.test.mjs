@@ -728,7 +728,7 @@ test("the Debug button only toggles its panel, left of the session stats", () =>
   assert.match(button, /aria-label=\{translate\("debug\.title"\)\}/);
   assert.match(button, /aria-pressed=\{open\}/);
   assert.match(button, /data-mobile-toolbar-action=\{mobile \? "debug" : undefined\}/);
-  assert.match(button, /if \(!showChat\) return null;/);
+  assert.match(button, /if \(!showChat \|\| !topBarButtons\.debug\) return null;/, "hidden by Settings › General › Top bar, and without a chat");
   assert.notEqual(enLocale.messages["debug.title"], enLocale.messages["session.title"], "e2e finds the stats button by its own name");
 
   // Desktop: after the chat's actions, right before the stats, taking the free space.
