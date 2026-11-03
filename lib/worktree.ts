@@ -169,13 +169,27 @@ function removedWorktreeRepo(cwd: string): string | null {
  * question without blocking (`inferRemovedWorktreeAsync()`).
  */
 export function inferRemovedWorktree(cwd: string): ProjectInfo | null {
+  const projectRoot = worktreeProjectRoot(cwd);
+  if (!projectRoot) return null;
+  return { projectRoot, branch: basename(cwd), isWorktree: true, isTopLevel: true };
+}
+
+/**
+ * The main checkout a Pi Web worktree path belongs to, by `addWorktree()`'s
+ * naming convention (`<repoRoot>-worktrees/<dir>`), whether or not the worktree
+ * still exists. Path-only and synchronous, and it runs no git: a caller that
+ * must not start a subprocess — reading a project's `.env`, say — gets the
+ * checkout from the path itself. `git rev-parse --git-common-dir` would let a
+ * repository name *any* directory as its root, which is not something a key
+ * file's lookup may follow.
+ */
+export function worktreeProjectRoot(cwd: string): string | null {
   const repoRoot = removedWorktreeRepo(cwd);
   if (!repoRoot) return null;
   // A bare clone has no `.git`; git takes HEAD, objects/ and refs/ for a git dir.
   const isRepo = existsSync(join(repoRoot, ".git"))
     || ["HEAD", "objects", "refs"].every((name) => existsSync(join(repoRoot, name)));
-  if (!isRepo) return null;
-  return { projectRoot: realPathOrSelf(repoRoot), branch: basename(cwd), isWorktree: true, isTopLevel: true };
+  return isRepo ? realPathOrSelf(repoRoot) : null;
 }
 
 /**

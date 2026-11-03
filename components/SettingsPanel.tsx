@@ -22,6 +22,7 @@ import { clearStoredDrafts } from "@/lib/draft-store";
 import type { ProjectTrustStatus, ToolSettingsResponse } from "@/lib/api-types";
 import { SETTINGS_BUILTIN_TOOLS } from "@/lib/tool-presets";
 import {
+  settingsSectionAvailable,
   setLastSettingsSection,
   settingsSectionRequiresProject,
   type SettingsSection,
@@ -680,7 +681,9 @@ export function SettingsPanel({
   onProjectTrustChanged,
 }: Props) {
   const { t } = useI18n();
-  const [section, setSection] = useState<SettingsSection>(initialSection);
+  const [section, setSection] = useState<SettingsSection>(
+    () => (settingsSectionAvailable(initialSection) ? initialSection : "general"),
+  );
   const [mountedSections, setMountedSections] = useState<ReadonlySet<SettingsSection>>(
     () => new Set([section]),
   );
@@ -693,7 +696,9 @@ export function SettingsPanel({
     { id: "plugins", label: t("common.plugins") },
     { id: "mcp", label: t("settings.mcp") },
     { id: "schedule", label: t("settings.schedule") },
-  ] as const).map((item) => ({ ...item, requiresProject: settingsSectionRequiresProject(item.id) }));
+  ] as const)
+    .filter((item) => settingsSectionAvailable(item.id))
+    .map((item) => ({ ...item, requiresProject: settingsSectionRequiresProject(item.id) }));
   const sectionRequiresProject = settingsSectionRequiresProject(section);
   const isPhone = useIsMobile();
   const phone = usePhoneSettingsLevel(isPhone, openAtHome);
@@ -728,7 +733,9 @@ export function SettingsPanel({
     reportDetailTitle: setDetailTitle,
   }), [enterPhoneLevel, goUpPhoneLevel, phone.level, phoneLevelRef]);
 
-  useEffect(() => setLastSettingsSection(initialSection), [initialSection]);
+  useEffect(() => {
+    setLastSettingsSection(settingsSectionAvailable(initialSection) ? initialSection : "general");
+  }, [initialSection]);
 
   // Bubble phase, unless something nearer handled the key. The trust dialog,
   // which opens above Settings, takes Escape in the capture phase and stops it,
@@ -871,7 +878,7 @@ export function SettingsPanel({
           )}
           <ConfigDetailNavigationContext.Provider value={detailNavigation}>
           {sectionHost("general", <GeneralSettings sessionId={sessionId} onSessionReloaded={onSessionReloaded} quoteSelectionEnabled={quoteSelectionEnabled} onQuoteSelectionChange={onQuoteSelectionChange} />)}
-          {sectionHost("models", <ModelsConfig embedded cwd={cwd} onClose={onClose} />)}
+          {settingsSectionAvailable("models") && sectionHost("models", <ModelsConfig embedded cwd={cwd} onClose={onClose} />)}
           {/* Visited sections stay mounted, so the ones whose answer depends on trust take the page's
               status and load again in place when trusting from Settings › MCP changes it. */}
           {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} onClose={onClose} />)}

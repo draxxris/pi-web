@@ -21,6 +21,23 @@ export function settingsSectionRequiresProject(section: SettingsSection): boolea
   return PROJECT_SECTIONS.has(section);
 }
 
+/**
+ * Settings › Models is hidden in this build. With a project's `.env` supplying
+ * provider keys per folder (docs/agents/models.md), the panel can only report
+ * the *host's* stored credentials — a project's key is invisible to it — and a
+ * key saved there lands in `auth.json`, which owns the provider and so silently
+ * defeats every project's `.env`. Hiding the tab keeps the UI from inviting
+ * that; nothing behind it is disabled: `/api/models-config`, `/api/auth/**` and
+ * `~/.pi/agent/models.json` work exactly as before, and the model picker still
+ * reads `/api/models`. Flip this to `true` to bring the tab back.
+ */
+export const MODELS_SETTINGS_SECTION_ENABLED = false;
+
+/** Whether Settings offers this section at all (before the project check). */
+export function settingsSectionAvailable(section: SettingsSection): boolean {
+  return section !== "models" || MODELS_SETTINGS_SECTION_ENABLED;
+}
+
 interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -80,7 +97,7 @@ export function getLastSettingsSection(
   if (!storage) return "general";
   try {
     const section = readState(storage).section;
-    if (!isSettingsSection(section)) return "general";
+    if (!isSettingsSection(section) || !settingsSectionAvailable(section)) return "general";
     return settingsSectionRequiresProject(section) && !cwd ? "general" : section;
   } catch {
     return "general";

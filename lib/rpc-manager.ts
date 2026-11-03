@@ -21,6 +21,7 @@ import {
   preferUserBashExtension,
   preferUserPowerShellExtension,
 } from "./project-command-env";
+import { applyProjectEnvFor } from "./project-env-auth";
 import { cacheSessionPath, catalogFirstMessage, getLatestModelChange, invalidateSessionListCache, invalidateSessionManagerCache, invalidateSessionPathCache, readLatestSessionEntryId, resolveSessionPath } from "./session-reader";
 import { computeLiveSessionTotalActiveMs } from "./session-timing";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
@@ -3720,6 +3721,15 @@ export async function startRpcSession(
           },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
+    // A project's `.env` may hold the provider keys for that project (one
+    // `OPENROUTER_API_KEY` per repository, say). Only a name pi maps to a
+    // provider's own API-key variable is taken, and only onto this session's
+    // runtime, so projects open at once authenticate separately; nothing becomes
+    // an environment for the shell tools (lib/project-env-auth.ts). Applied
+    // before the model scope below resolves availability, so a provider whose
+    // only key is in the file is choosable. Never throws: a file that cannot be
+    // applied starts the session on the credentials the runtime already has.
+    await applyProjectEnvFor(services.modelRuntime, sessionCwd, agentDir);
     if (subagentResources?.codemode
       && !services.resourceLoader.getExtensions().extensions.some((extension) => extension.tools.has("codemode"))) {
       throw new Error("Code mode is unavailable: builtin:codemode was not registered");
