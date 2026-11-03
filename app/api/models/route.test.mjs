@@ -119,6 +119,33 @@ test("a missing folder that is not a removed worktree of a repo is refused as be
   assert.equal(orphan.body.error, `Directory does not exist: ${join(`${root}-worktrees`, "orphan")}`);
 });
 
+test("a project's .env updates the picker without exposing its key or keeping a stale cache", async () => {
+  const project = await initRepo("project-env");
+  allowFileRoot(project);
+  const envFile = join(project, ".env");
+  const key = "sk-or-v1-project-route-test";
+
+  try {
+    const before = await models(project);
+    assert.equal(before.status, 200);
+    assert.equal(before.body.modelList.some((model) => model.provider === "openrouter"), false);
+
+    await writeFile(envFile, `OPENROUTER_API_KEY=${key}\n`);
+    const withKey = await models(project);
+    assert.equal(withKey.status, 200);
+    assert.equal(withKey.body.modelList.some((model) => model.provider === "openrouter"), true);
+    assert.equal(JSON.stringify(withKey.body).includes(key), false);
+
+    await rm(envFile);
+    const after = await models(project);
+    assert.equal(after.status, 200);
+    assert.equal(after.body.modelList.some((model) => model.provider === "openrouter"), false);
+  } finally {
+    await rm(envFile, { force: true });
+    invalidateModelsCache();
+  }
+});
+
 test("honors ?scope=all on demand and reports isScoped accurately", async () => {
   await writeFile(join(agentDir, "models.json"), JSON.stringify({
     providers: {

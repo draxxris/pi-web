@@ -81,7 +81,12 @@ import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { createSideChat, deleteSideChat } from "@/lib/side-chat-client";
 import { sideChatHit } from "@/lib/session-search-hit";
 import { getAgentStripMembers, getAgentsBadge, getSessionFamily, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
-import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
+import {
+  getLastSettingsSection,
+  settingsSectionAvailable,
+  settingsSectionRequiresProject,
+  type SettingsSection,
+} from "@/lib/settings-navigation";
 import { focusIfLost } from "@/lib/stacked-dialog";
 import { loadAgentStripLocked, saveAgentStripLocked } from "@/lib/agent-strip-lock";
 import { claimDoneChime } from "@/lib/done-chime";
@@ -504,7 +509,8 @@ export function AppShell() {
   // The composer opens Settings too: a bare /mcp opens Settings › MCP (useAgentSession).
   const openSettingsSection = useCallback((section: SettingsSection) => {
     setSettingsOpenAtHome(false);
-    setSettingsSection(section);
+    // A section this build hides opens the first one instead (lib/settings-navigation.ts).
+    setSettingsSection(settingsSectionAvailable(section) ? section : "general");
   }, []);
 
   const handleSidebarToggle = useCallback(() => {
@@ -1683,7 +1689,9 @@ export function AppShell() {
         {([
           ["models", translate("common.models")],
           ["skills", translate("common.skills")],
-        ] as const).map(([section, label]) => {
+        ] as const)
+          .filter(([section]) => settingsSectionAvailable(section))
+          .map(([section, label]) => {
           const disabled = settingsSectionRequiresProject(section) && !projectTrustCwd;
           return (
             <button

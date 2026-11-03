@@ -13,6 +13,8 @@ import { orderSelectorModels, resolveVisibleModels, selectInitialModelScope } fr
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { projectTrustReloadOptions } from "@/lib/project-trust";
 import { llamaCppExtension } from "@/lib/pi-sdk-internals";
+import { projectEnvFile, projectEnvTrust, projectEnvVersion, readProjectEnvFor } from "@/lib/project-env";
+import { applyProjectEnvKeys } from "@/lib/project-env-auth";
 import { providerDisplayNames, rememberProviderModels, withDeferredProviderModels } from "@/lib/deferred-provider-models";
 import { inferRemovedWorktree } from "@/lib/worktree";
 import { cwdMissingBody } from "@/lib/missing-cwd";
@@ -39,6 +41,17 @@ async function loadModels(cwd: string, scopeAll = false): Promise<ModelsData> {
   });
   const modelError = services.modelRuntime.getError();
   const settings: SettingsManager = services.settingsManager;
+  // A provider whose only key is in this project's `.env` must appear as
+  // configured here, or the picker would hide the very model the session that
+  // starts in this folder can authenticate (lib/project-env-auth.ts).
+  const projectEnv = readProjectEnvFor(cwd, projectEnvTrust(agentDir));
+  if (Object.keys(projectEnv.values).length > 0) {
+    try {
+      await applyProjectEnvKeys(services.modelRuntime, projectEnv.values);
+    } catch {
+      // List the providers the runtime already has.
+    }
+  }
   await rememberProviderModels(services.modelRuntime);
   const providerNames = providerDisplayNames(services.modelRuntime);
   // `enabledModels` supports globs and fuzzy patterns, so resolve it the same
@@ -140,7 +153,13 @@ export async function GET(req: Request) {
   }
 
   try {
-    const cacheKey = scopeAll ? `${cwd}#all` : cwd;
+    // The project's `.env` takes part in the answer above, so an edited key file
+    // must not wait out the entry: the version of the file a load would read
+    // (the main checkout's, for a worktree) keys it, from the path alone — no
+    // read, parse or trust-store access on a cache hit (lib/project-env.ts).
+    // A trust change in Pi Web invalidates the cache (app/api/project-trust).
+    const envVersion = projectEnvVersion(projectEnvFile(cwd));
+    const cacheKey = scopeAll ? `${cwd}#all#env:${envVersion}` : `${cwd}#env:${envVersion}`;
     return Response.json(await loadModelsWithCache(cacheKey, () => loadModels(cwd, scopeAll)));
   } catch {
     return Response.json(withSafeModelLoadFailure(EMPTY_MODELS));

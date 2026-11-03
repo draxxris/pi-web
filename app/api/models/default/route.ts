@@ -14,6 +14,7 @@ import { withDeferredProviderModels } from "@/lib/deferred-provider-models";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { projectTrustReloadOptions } from "@/lib/project-trust";
 import { llamaCppExtension } from "@/lib/pi-sdk-internals";
+import { applyProjectEnvFor } from "@/lib/project-env-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -83,6 +84,10 @@ export async function PUT(req: Request) {
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
     const { settingsManager } = services;
+    // A project's `.env` may be the only thing that authenticates the model being
+    // starred, and the scope below only offers what this runtime can use
+    // (lib/project-env-auth.ts).
+    await applyProjectEnvFor(services.modelRuntime, cwd, agentDir);
 
     const shadowed = shadowingProjectKeys(settingsManager, edit);
     if (shadowed.length > 0) {
