@@ -17,6 +17,7 @@ import { resolveProject, type ProjectInfo } from "./worktree";
 import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents";
 import { readSideRelation } from "./side-session";
 import { checkSessionMembership, listSessionsIncremental, scanSessionFileInfo, type ScannedSessionInfo } from "./session-list-scanner";
+import { findLandstripSessionPath } from "./landstrip-subagents";
 
 export { getAgentDir };
 
@@ -432,7 +433,11 @@ async function findSessionPathById(sessionId: string): Promise<string | null> {
     }
   }
 
-  return match ?? null;
+  if (match) return match;
+  // pi-landstrip's own runs keep their session files below the folder this
+  // scan reads (sessions/pi-landstrip/<parent>/<task>/); the switcher opens
+  // them like any other child session.
+  return findLandstripSessionPath(sessionId);
 }
 
 function findSessionIdByPath(filePath: string): string | undefined {

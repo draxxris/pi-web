@@ -80,7 +80,7 @@ import type { FileViewerState } from "@/lib/file-viewer-state";
 import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { createSideChat, deleteSideChat } from "@/lib/side-chat-client";
 import { sideChatHit } from "@/lib/session-search-hit";
-import { getAgentStripMembers, getAgentsBadge, getSessionFamily, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
+import { getAgentStripMembers, getAgentsBadge, getSessionFamilyIncluding, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
 import {
   getLastSettingsSection,
   settingsSectionAvailable,
@@ -101,6 +101,28 @@ type AutoNameStatus =
 // app/globals.css: 36px, 44px on a phone or touch screen.
 const TOP_BAR_ICON_BUTTON_SIZE = "var(--top-bar-height)";
 const AGENT_PANEL_WIDTH = 420;
+// pi-landstrip runs in another pi process: re-read its runs while the switcher
+// or strip is visible, or one of its runs is going.
+const LANDSTRIP_AGENTS_POLL_MS = 4_000;
+// Kept apart from a fresh [] so the rows' memo does not churn every render.
+const NO_LANDSTRIP_AGENTS: SessionInfo[] = [];
+
+/** Whether two polls' rows are the same, so a read that learned nothing keeps the last ones. */
+function sameLandstripRows(previous: SessionInfo[], next: SessionInfo[]): boolean {
+  if (previous.length !== next.length) return false;
+  return previous.every((row, index) => {
+    const other = next[index];
+    const relation = row.relation?.kind === "subagent" ? row.relation : null;
+    const otherRelation = other.relation?.kind === "subagent" ? other.relation : null;
+    return other.id === row.id
+      && other.name === row.name
+      && other.modified === row.modified
+      && other.messageCount === row.messageCount
+      && relation?.status === otherRelation?.status
+      && relation?.profile === otherRelation?.profile
+      && relation?.description === otherRelation?.description;
+  });
+}
 // pi's built-in tools that never change a file; any other tool may (#1144).
 const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
 const TOOL_END_REFRESH_MS = 1000;
@@ -189,10 +211,16 @@ export function AppShell() {
       selectedSession,
     ];
   }, [selectedSession, sessionCatalog]);
+  // A pi-landstrip run opened as the main chat is in no listed family; the
+  // parent it names has one (lib/session-family.ts).
   const activeSessionFamily = useMemo(
-    () => getSessionFamily(sessionsWithSelection, selectedSession?.id),
-    [selectedSession?.id, sessionsWithSelection],
+    () => getSessionFamilyIncluding(sessionsWithSelection, selectedSession),
+    [selectedSession, sessionsWithSelection],
   );
+  // pi-landstrip's subagent runs of this family, read from disk with the root
+  // they were read for (they belong to another pi process). Named here so the
+  // switcher's badge can count them; the read itself follows the top panel.
+  const [landstripAgents, setLandstripAgents] = useState<{ rootId: string; rows: SessionInfo[] } | null>(null);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const handleRunningSessionIdsChange = useCallback((ids: Set<string>) => {
     setRunningSessionIds((previous) => {
@@ -200,21 +228,8 @@ export function AppShell() {
       return ids;
     });
   }, []);
-  const agentsBadge = activeSessionFamily ? getAgentsBadge(activeSessionFamily.subagents, runningSessionIds) : null;
-  const agentsButtonLabel = agentsBadge?.running
-    ? translate("agentSwitcher.titleRunning", { count: agentsBadge.count })
-    : translate("agentSwitcher.title");
-  // A subagent or side chat in the main chat gets the Agents strip under the toolbar (#1658).
-  // It shows whenever the full switcher is closed, so the Agents button swaps the two there.
-  // On the main agent only while this browser has it locked (the strip's own padlock);
-  // otherwise the button opens and closes the switcher there as before.
+  // The strip's lock and focus handoff are shared with the Agents switcher.
   const [agentStripLocked, setAgentStripLocked] = useState(loadAgentStripLocked);
-  const agentStripMembers = useMemo(
-    () => getAgentStripMembers(activeSessionFamily, selectedSession?.id, agentStripLocked),
-    [activeSessionFamily, selectedSession?.id, agentStripLocked],
-  );
-  // The Agents button on screen (one of its places at a time): focus goes back to it when the
-  // switcher closes on a pick or the strip leaves under the keyboard.
   const agentsButtonRef = useRef<HTMLButtonElement | null>(null);
   const handleToggleAgentStripLock = useCallback(() => {
     const next = !agentStripLocked;
@@ -442,6 +457,97 @@ export function AppShell() {
   // Single active panel — only one dropdown open at a time
   const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "debug" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // pi-landstrip's runs are read back on demand: when the family changes, and
+  // while the switcher or strip is visible or one of them runs, since only a
+  // re-read shows progress another process makes. Nothing here starts a wrapper.
+  const landstripRootId = activeSessionFamily?.root.id ?? null;
+  const landstripRows = landstripAgents && landstripAgents.rootId === landstripRootId
+    ? landstripAgents.rows
+    : NO_LANDSTRIP_AGENTS;
+  const landstripRunningIds = useMemo(
+    () => new Set(landstripRows.flatMap((session) => (
+      session.relation?.kind === "subagent" && session.relation.status === "running" ? [session.id] : []
+    ))),
+    [landstripRows],
+  );
+  // The switcher and strip share the same family, including externally-owned runs.
+  // Prefer the latest disk row for a selected landstrip child over the copy held
+  // in the selection, so its task and status keep up with polling.
+  const familySubagents = useMemo(() => {
+    if (!activeSessionFamily) return [];
+    const rows = new Map(activeSessionFamily.subagents.map((session) => [session.id, session]));
+    for (const session of landstripRows) {
+      if (!rows.has(session.id) || (session.id === selectedSession?.id && !sessionCatalog.some((item) => item.id === session.id))) {
+        rows.set(session.id, session);
+      }
+    }
+    return [...rows.values()];
+  }, [activeSessionFamily, landstripRows, selectedSession?.id, sessionCatalog]);
+  const agentStripMembers = useMemo(
+    () => getAgentStripMembers(
+      activeSessionFamily ? { ...activeSessionFamily, subagents: familySubagents } : null,
+      selectedSession?.id,
+      agentStripLocked,
+    ),
+    [activeSessionFamily, familySubagents, selectedSession?.id, agentStripLocked],
+  );
+  const landstripLive = activeTopPanel === "agents" || landstripRunningIds.size > 0
+    || agentStripMembers !== null;
+  const landstripLoadedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!landstripRootId) {
+      landstripLoadedForRef.current = null;
+      return;
+    }
+    const controller = new AbortController();
+    let inFlight = false;
+    const load = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(landstripRootId)}/landstrip`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const data = await res.json() as { agents?: SessionInfo[] };
+        const rows = Array.isArray(data.agents) ? data.agents : [];
+        if (controller.signal.aborted) return;
+        landstripLoadedForRef.current = landstripRootId;
+        // Polling alone must not re-render the page: a read that changes nothing
+        // keeps the last rows, and their identity.
+        setLandstripAgents((previous) => (
+          previous && previous.rootId === landstripRootId && sameLandstripRows(previous.rows, rows)
+            ? previous
+            : { rootId: landstripRootId, rows }
+        ));
+      } catch {
+        /* best-effort: the rows keep their last state */
+      } finally {
+        inFlight = false;
+      }
+    };
+    // A family already read is not read again just because polling stops; a
+    // different family is, and a read aborted with the effect is tried again.
+    if (landstripLoadedForRef.current !== landstripRootId || landstripLive) void load();
+    if (!landstripLive) return () => controller.abort();
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") void load();
+    }, LANDSTRIP_AGENTS_POLL_MS);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
+  }, [landstripRootId, landstripLive]);
+  const familyRunningSessionIds = useMemo(
+    () => (landstripRunningIds.size === 0 ? runningSessionIds : new Set([...runningSessionIds, ...landstripRunningIds])),
+    [landstripRunningIds, runningSessionIds],
+  );
+  const agentsBadge = activeSessionFamily ? getAgentsBadge(familySubagents, familyRunningSessionIds) : null;
+  const agentsButtonLabel = agentsBadge?.running
+    ? translate("agentSwitcher.titleRunning", { count: agentsBadge.count })
+    : translate("agentSwitcher.title");
 
   useEffect(() => {
     if (!sessionHasBranches) {
@@ -2639,9 +2745,9 @@ export function AppShell() {
               {activeTopPanel === "agents" && activeSessionFamily && selectedSession && (
                 <AgentSessionPanel
                   rootSession={activeSessionFamily.root}
-                  subagents={activeSessionFamily.subagents}
+                  subagents={familySubagents}
                   selectedSessionId={selectedSession.id}
-                  runningSessionIds={runningSessionIds}
+                  runningSessionIds={familyRunningSessionIds}
                   // A pick closes the switcher, so the strip (where it shows) takes over at once.
                   onSelectSession={(session) => {
                     setActiveTopPanel(null);
@@ -2882,7 +2988,7 @@ export function AppShell() {
             rootSession={activeSessionFamily.root}
             members={agentStripMembers}
             selectedSessionId={selectedSession.id}
-            runningSessionIds={runningSessionIds}
+            runningSessionIds={familyRunningSessionIds}
             onSelectSession={handleSelectSession}
             locked={agentStripLocked}
             onToggleLock={handleToggleAgentStripLock}
