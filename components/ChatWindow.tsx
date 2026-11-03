@@ -879,7 +879,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       modelError={modelError}
       missingCwd={missingCwd}
       onForkMissingCwd={canForkMissingCwd ? openForkPicker : undefined}
-      modelScopeWarnings={modelScopeWarnings}
+      // `enabledModels` warnings describe what a new session can offer, so they
+      // belong on the new-session composer only: kept on an active one they sat
+      // above every reply of the session they warned about.
+      modelScopeWarnings={isEmptyNew ? modelScopeWarnings : undefined}
       allModelList={allModelList}
       onLoadAllModels={isModelScopeActive ? loadAllModels : undefined}
       onModelChange={handleModelChange}
