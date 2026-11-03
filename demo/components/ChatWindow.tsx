@@ -888,7 +888,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       modelNames={modelNames}
       modelList={modelList}
       modelError={modelError}
-      modelScopeWarnings={modelScopeWarnings}
+      // New-session composer only, as in components/ChatWindow.tsx.
+      modelScopeWarnings={isEmptyNew ? modelScopeWarnings : undefined}
       onModelChange={handleModelChange}
       modelSwitching={modelSwitching}
       onCompact={session || isNew ? handleCompact : undefined}
