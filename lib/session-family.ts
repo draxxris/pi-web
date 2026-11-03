@@ -119,6 +119,23 @@ export function getSessionFamily(
 }
 
 /**
+ * The family of a session the list holds nowhere itself. A pi-landstrip run's
+ * session file sits below the folders the catalogue scans, so its row reaches
+ * the client without the list: it joins the family of the parent it names.
+ */
+export function getSessionFamilyIncluding(
+  sessions: readonly SessionInfo[],
+  session: SessionInfo | null | undefined,
+): SessionFamily | null {
+  if (!session) return null;
+  const family = getSessionFamily(sessions, session.id);
+  if (family) return family;
+  if (!isHiddenRelation(session.relation)) return null;
+  const parentFamily = getSessionFamily(sessions, session.relation.parentSessionId);
+  return parentFamily ? { ...parentFamily, subagents: [...parentFamily.subagents, session] } : null;
+}
+
+/**
  * The Agents strip under the chat toolbar (#1658): while the main chat shows a member of a
  * family other than its root, every member in creation order, so the chips never move as runs
  * start and end. On the root only while the strip is locked and the family has a member; null

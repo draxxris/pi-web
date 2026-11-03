@@ -64,6 +64,7 @@ import { createSubagentController, getLiveSubagentStatus, hasUnsettledSubagentRu
 import { isBuiltInSubagentsEnabled } from "./subagent-settings";
 import { createScheduledPromptsExtension, preferPiWebScheduledPromptsExtension } from "./scheduled-prompts";
 import { isScheduledPromptsEnabled } from "./scheduled-prompts-settings";
+import { isLandstripSessionFile, landstripSessionBusy } from "./landstrip-subagents";
 import { resolveShellTools } from "./powershell-settings";
 import { CHAT_ONLY_RESOURCE_LOADER_OPTIONS, contextFilesSystemPrompt } from "./chat-only";
 import { createExactSystemPromptExtension } from "./exact-system-prompt";
@@ -454,7 +455,6 @@ export class AgentSessionWrapper {
   private lastEventAt: number | null = null;
   private lastCommandType: string | null = null;
   private lastCommandAt: number | null = null;
-
   constructor(
     public readonly inner: AgentSessionLike,
     options: AgentSessionWrapperOptions = {},
@@ -1276,10 +1276,17 @@ export class AgentSessionWrapper {
       this.idleDeadlineAt = null;
       // A subagent run that waits for a slot (or its MCP servers) holds this SDK session and will
       // prompt it: disposing it now would leave that run on a dead session that records nothing (#1590).
-      if (!this.forceShutdownOnIdle && (this.isRunning() || getLiveSubagentStatus(this.sessionId) !== undefined || hasActiveSessionLivenessProvider({
-        sessionId: this.sessionId,
-        sessionFile: this.sessionFile || undefined,
-      }))) {
+      // pi-landstrip's runs are invisible to every other check here — they are neither this
+      // session's run nor a pi-web subagent — while the extension rewrites their records in this
+      // session's file as they go. Without the claim an idle timer shuts the wrapper down
+      // mid-run and kills the worker (a 10-minute review died that way).
+      if (!this.forceShutdownOnIdle && (this.isRunning()
+        || getLiveSubagentStatus(this.sessionId) !== undefined
+        || landstripSessionBusy({ sessionId: this.sessionId, sessionFile: this.sessionFile || undefined })
+        || hasActiveSessionLivenessProvider({
+          sessionId: this.sessionId,
+          sessionFile: this.sessionFile || undefined,
+        }))) {
         this.resetIdleTimer();
         return;
       }
@@ -3302,6 +3309,11 @@ export function getRpcSessionInfos(options: { includeTransient?: boolean } = {})
     const messages = entries.filter((entry): entry is SessionMessageEntry => entry.type === "message");
     const firstUserMessage = messages.find((entry) => entry.message.role === "user");
     const sessionFile = manager.getSessionFile() ?? session.sessionFile;
+    // A pi-landstrip run's child session has no place in the catalogue (its file
+    // sits below the folders the scan reads); the Agents switcher lists it. A
+    // wrapper opened on one — a tab, the main chat — must not become a sidebar
+    // row with no relation, or replace the row's one on the next list refresh.
+    if (!options.includeTransient && sessionFile && isLandstripSessionFile(sessionFile)) continue;
     const persisted = Boolean(sessionFile && existsSync(sessionFile));
     const subagent = readSubagentRun(entries as unknown as SessionEntry[], header?.id ?? session.sessionId, sessionFile ?? "");
     const side = subagent ? null : readSideRelation(entries as unknown as SessionEntry[]);
