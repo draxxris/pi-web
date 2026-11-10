@@ -90,10 +90,46 @@ export function jumpToMarkdownFragment(event: MarkdownFragmentClick): void {
   } catch {
     // A malformed escape is matched as written.
   }
+  const body = event.currentTarget.closest(".markdown-body");
   const name = CSS.escape(id);
-  event.currentTarget.closest(".markdown-body")
-    ?.querySelector(`[id="${name}"], a[name="${name}"]`)
-    ?.scrollIntoView({ block: "start" });
+  const named = body?.querySelector(`[id="${name}"], a[name="${name}"]`);
+  if (named) {
+    named.scrollIntoView({ block: "start" });
+    return;
+  }
+  // `rehypeMatchClobberedIds` prefixes a fragment link the way the sanitizer
+  // prefixes ids, so a heading link (a generated report's `[CA1](#ca1-…)`)
+  // arrives here as `#user-content-ca1-…` while `markdownHeadingAnchors`
+  // wrote the slug unprefixed. Chat gives headings no slug at all and still
+  // lands nowhere; the file preview does (markdownPreviewRehypePlugins).
+  const slug = id.startsWith(markdownClobberPrefix) ? id.slice(markdownClobberPrefix.length) : id;
+  headingBySlug(body, slug)?.scrollIntoView({ block: "start" });
+}
+
+/** A slug with its runs of hyphens squeezed to one, for comparing sluggers. */
+function withoutHyphenRuns(slug: string): string {
+  return slug.replace(/-+/g, "-");
+}
+
+/**
+ * The heading `slug` names, inside one rendered document. An exact match is
+ * tried first. Sluggers disagree on runs of whitespace around removed
+ * punctuation: GitHub's github-slugger keeps one hyphen per space, so
+ * `### … Blasts / Telegraphs` is `…-blasts--telegraphs`, while a generator that
+ * collapses whitespace writes `…-blasts-telegraphs` (the code-audit skill's
+ * report did). Comparing with the runs squeezed resolves a link either produced
+ * that way; a slug that matches no heading exactly still lands on the only
+ * heading that differs from it by hyphen runs alone.
+ */
+function headingBySlug(body: Element | null | undefined, slug: string): Element | null {
+  if (!body) return null;
+  const exact = body.querySelector(`[data-heading-anchor="${CSS.escape(slug)}"]`);
+  if (exact) return exact;
+  const squeezed = withoutHyphenRuns(slug);
+  for (const heading of body.querySelectorAll("[data-heading-anchor]")) {
+    if (withoutHyphenRuns(heading.getAttribute("data-heading-anchor") ?? "") === squeezed) return heading;
+  }
+  return null;
 }
 
 /**
@@ -835,9 +871,15 @@ export const markdownDocumentRehypePlugins: ReactMarkdownOptions["rehypePlugins"
   [rehypeKatex, { throwOnError: false, strict: false }],
 ];
 
+// The file preview, where a link to a heading must land: a generated report's
+// `[CA1](#ca1-…)` names a heading the author's renderer slugged, so headings
+// get github-slugger slugs here (as a data attribute, so two open previews
+// never share an id, and so `jumpToMarkdownFragment` can find the one a link in
+// the same document names).
 export const markdownPreviewRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
   rehypeMatchClobberedIds,
+  markdownHeadingAnchors,
   [rehypeKatex, { throwOnError: false, strict: false }],
 ];
