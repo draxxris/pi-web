@@ -12,7 +12,8 @@ import {
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 const TITLE_TIMEOUT_MS = 90_000;
-const TITLE_MAX_TOKENS = 256;
+// Reasoning and the title can share the output budget, even at low effort.
+const TITLE_MAX_TOKENS = 2048;
 const MAX_TITLE_LENGTH = 80;
 
 // Per-message caps. A title needs what the user asked for (every user turn,
