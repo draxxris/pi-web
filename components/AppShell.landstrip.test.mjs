@@ -38,19 +38,21 @@ test("the strip and switcher share landstrip siblings and keep polling while vis
     activeSessionFamily: { root, subagents: [selected] }, selectedSession: selected,
     sessionCatalog: [root], landstripRootId: root.id,
     landstripAgents: { rootId: root.id, rows: [latest, running] },
+    runningSessionIds: new Set(),
     NO_LANDSTRIP_AGENTS: [], agentStripLocked: false, activeTopPanel: null,
     useMemo: (fn) => fn(), getAgentStripMembers,
   });
   const result = vm.runInContext(`${merge}\n({ familySubagents, agentStripMembers, landstripRunningIds, landstripLive })`, context);
   assert.deepEqual(Array.from(result.familySubagents, (item) => item.id), ["one", "two"]);
   assert.equal(result.familySubagents[0].name, "Renamed");
-  assert.deepEqual(Array.from(result.agentStripMembers, (item) => item.id), ["one", "two"]);
+  assert.deepEqual(Array.from(result.agentStripMembers, (item) => item.id), ["two"]);
   assert.deepEqual(Array.from(result.landstripRunningIds), ["two"]);
   assert.equal(result.landstripLive, true);
 
   // A visible strip keeps watching even after all external runs finish.
   context.landstripAgents = { rootId: root.id, rows: [latest, { ...running, relation: { ...running.relation, status: "completed" } }] };
-  const stopped = vm.runInContext(`${merge}\n({ landstripRunningIds, landstripLive })`, vm.createContext({ ...context }));
+  const stopped = vm.runInContext(`${merge}\n({ agentStripMembers, landstripRunningIds, landstripLive })`, vm.createContext({ ...context }));
+  assert.deepEqual(Array.from(stopped.agentStripMembers, (item) => item.id), []);
   assert.equal(stopped.landstripRunningIds.size, 0);
   assert.equal(stopped.landstripLive, true);
 });

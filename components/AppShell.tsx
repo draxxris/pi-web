@@ -478,6 +478,10 @@ export function AppShell() {
     ))),
     [landstripRows],
   );
+  const familyRunningSessionIds = useMemo(
+    () => (landstripRunningIds.size === 0 ? runningSessionIds : new Set([...runningSessionIds, ...landstripRunningIds])),
+    [landstripRunningIds, runningSessionIds],
+  );
   // The switcher and strip share the same family, including externally-owned runs.
   // Prefer the latest disk row for a selected landstrip child over the copy held
   // in the selection, so its task and status keep up with polling.
@@ -495,9 +499,10 @@ export function AppShell() {
     () => getAgentStripMembers(
       activeSessionFamily ? { ...activeSessionFamily, subagents: familySubagents } : null,
       selectedSession?.id,
+      familyRunningSessionIds,
       agentStripLocked,
     ),
-    [activeSessionFamily, familySubagents, selectedSession?.id, agentStripLocked],
+    [activeSessionFamily, familySubagents, selectedSession?.id, familyRunningSessionIds, agentStripLocked],
   );
   const landstripLive = activeTopPanel === "agents" || landstripRunningIds.size > 0
     || agentStripMembers !== null;
@@ -547,10 +552,6 @@ export function AppShell() {
       controller.abort();
     };
   }, [landstripRootId, landstripLive]);
-  const familyRunningSessionIds = useMemo(
-    () => (landstripRunningIds.size === 0 ? runningSessionIds : new Set([...runningSessionIds, ...landstripRunningIds])),
-    [landstripRunningIds, runningSessionIds],
-  );
   const agentsBadge = activeSessionFamily ? getAgentsBadge(familySubagents, familyRunningSessionIds) : null;
   const agentsButtonLabel = agentsBadge?.running
     ? translate("agentSwitcher.titleRunning", { count: agentsBadge.count })
@@ -3032,6 +3033,7 @@ export function AppShell() {
           <AgentMiniStrip
             rootSession={activeSessionFamily.root}
             members={agentStripMembers}
+            allMembers={familySubagents}
             selectedSessionId={selectedSession.id}
             runningSessionIds={familyRunningSessionIds}
             onSelectSession={handleSelectSession}

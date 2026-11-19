@@ -135,24 +135,41 @@ export function getSessionFamilyIncluding(
   return parentFamily ? { ...parentFamily, subagents: [...parentFamily.subagents, session] } : null;
 }
 
+const EMPTY_SESSION_IDS: ReadonlySet<string> = new Set();
+
+/** Whether a family member is currently active (running, starting, or queued). */
+export function isActiveAgentStripMember(
+  session: SessionInfo,
+  runningSessionIds: ReadonlySet<string>,
+): boolean {
+  if (runningSessionIds.has(session.id)) return true;
+  return session.relation?.kind === "subagent"
+    && (session.relation.status === "queued" || session.relation.status === "starting");
+}
+
 /**
  * The Agents strip under the chat toolbar (#1658): while the main chat shows a member of a
- * family other than its root, every member in creation order, so the chips never move as runs
- * start and end. On the root only while the strip is locked and the family has a member; null
- * otherwise, and while the main chat shows no family member.
+ * family other than its root, only active members in creation order (alongside the Main agent
+ * chip), so finished runs never clutter the bar. On the root only while the strip is locked
+ * and at least one active member exists; null otherwise, and while the main chat shows no
+ * family member.
  */
 export function getAgentStripMembers(
   family: SessionFamily | null,
   selectedSessionId: string | null | undefined,
+  runningSessionIds: ReadonlySet<string> = EMPTY_SESSION_IDS,
   locked = false,
 ): SessionInfo[] | null {
   if (!family || !selectedSessionId) return null;
+  const active = family.subagents
+    .filter((session) => isActiveAgentStripMember(session, runningSessionIds))
+    .sort((a, b) => a.created.localeCompare(b.created) || a.id.localeCompare(b.id));
   if (family.root.id === selectedSessionId) {
-    if (!locked || family.subagents.length === 0) return null;
+    if (!locked || active.length === 0) return null;
   } else if (!family.subagents.some((session) => session.id === selectedSessionId)) {
     return null;
   }
-  return [...family.subagents].sort((a, b) => a.created.localeCompare(b.created) || a.id.localeCompare(b.id));
+  return active;
 }
 
 /** Subagents of a family that the sidebar's running poll lists. */
