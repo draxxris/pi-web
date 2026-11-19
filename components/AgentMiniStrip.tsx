@@ -10,8 +10,10 @@ import { LockToggle } from "./LockToggle";
 
 interface Props {
   rootSession: SessionInfo;
-  /** Every family member but the root, in the order the chips keep (`getAgentStripMembers()`). */
+  /** Active family members to show after the Main agent chip (`getAgentStripMembers()`). */
   members: readonly SessionInfo[];
+  /** Full family member list, used to preserve consistent side-chat numbering. */
+  allMembers?: readonly SessionInfo[];
   selectedSessionId: string;
   runningSessionIds: ReadonlySet<string>;
   /** What a row of the Agents switcher does on a click. */
@@ -26,21 +28,25 @@ const LOCK_FOCUS_KEY = "\0lock";
 
 /**
  * One row under the chat toolbar while the main chat shows a subagent or a side chat (#1658):
- * the way back to the main agent and every other member, so typing into a child never looks
+ * the way back to the main agent and any active subagents, so typing into a child never looks
  * like talking to the parent. The Agents button swaps it for the full switcher and back. The
- * lock at its right end (the minimap's padlock) keeps it on the main agent as well.
+ * lock at its right end (the minimap's padlock) keeps it on the main agent while any run is active.
  */
-export function AgentMiniStrip({ rootSession, members, selectedSessionId, runningSessionIds, onSelectSession, locked, onToggleLock }: Props) {
+export function AgentMiniStrip({ rootSession, members, allMembers, selectedSessionId, runningSessionIds, onSelectSession, locked, onToggleLock }: Props) {
   const { t } = useI18n();
   const toolbarRef = useRef<HTMLDivElement>(null);
   // Only the members scroll (hidden scrollbar, wheel, current chip kept in view): the way back stays put.
   const scrollerRef = useHorizontalStrip<HTMLDivElement>('[aria-current="true"]', `${members.length}\n${selectedSessionId}`);
-  // Roving tab stop: one Tab stop for the row, on the chip last focused, else the current one.
+  // Roving tab stop: one Tab stop for the row, on the chip last focused, else the current one
+  // (falling back to the Main agent chip when viewing a finished subagent not listed here).
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const onMain = selectedSessionId === rootSession.id;
+  const defaultTabStopId = onMain || members.some((session) => session.id === selectedSessionId)
+    ? selectedSessionId
+    : rootSession.id;
   const tabStopId = focusedId && (focusedId === rootSession.id || focusedId === LOCK_FOCUS_KEY || members.some((session) => session.id === focusedId))
     ? focusedId
-    : selectedSessionId;
-  const onMain = selectedSessionId === rootSession.id;
+    : defaultTabStopId;
 
   // A toolbar's arrow keys: Left and Right move between chips, Home and End to the ends.
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -57,7 +63,6 @@ export function AgentMiniStrip({ rootSession, members, selectedSessionId, runnin
     chips[next].focus();
   };
 
-  const statusText = t("agentSwitcher.status.running");
   const rootRunning = runningSessionIds.has(rootSession.id);
   return (
     <div
@@ -92,7 +97,9 @@ export function AgentMiniStrip({ rootSession, members, selectedSessionId, runnin
         onFocus={() => setFocusedId(rootSession.id)}
         onClick={() => onSelectSession(rootSession)}
       />
-      <span aria-hidden="true" style={{ width: 1, height: 16, flexShrink: 0, background: "var(--border)" }} />
+      {members.length > 0 && (
+        <span aria-hidden="true" style={{ width: 1, height: 16, flexShrink: 0, background: "var(--border)" }} />
+      )}
       <div
         ref={scrollerRef}
         className="tabbar-scroll"
@@ -110,18 +117,23 @@ export function AgentMiniStrip({ rootSession, members, selectedSessionId, runnin
         {members.map((session) => {
           const side = session.relation?.kind === "side";
           const relation = session.relation?.kind === "subagent" ? session.relation : null;
-          const label = side ? sideChatTitle(session, t("agentSwitcher.sideChat"), members) : subagentTitle(session);
+          const label = side ? sideChatTitle(session, t("agentSwitcher.sideChat"), allMembers ?? members) : subagentTitle(session);
           const running = runningSessionIds.has(session.id);
+          const status = running ? "running" : relation?.status;
+          const memberStatus = status === "running" || status === "starting" || status === "queued"
+            ? t(`agentSwitcher.status.${status}`)
+            : null;
           const kind = side ? t("agentSwitcher.sideChat") : relation?.profile ?? t("agentSwitcher.subagent");
+          const spinning = running || status === "starting";
           return (
             <Chip
               key={session.id}
               label={label}
-              title={[label, kind, running ? statusText : null].filter(Boolean).join(" · ")}
+              title={[label, kind, memberStatus].filter(Boolean).join(" · ")}
               current={session.id === selectedSessionId}
               tabStop={tabStopId === session.id}
-              icon={running ? <StatusIcon status="running" /> : <AgentKindIcon kind={side ? "side" : "subagent"} size={12} />}
-              running={running}
+              icon={spinning ? <StatusIcon status="running" /> : <AgentKindIcon kind={side ? "side" : "subagent"} size={12} />}
+              running={spinning}
               onFocus={() => setFocusedId(session.id)}
               onClick={() => onSelectSession(session)}
             />

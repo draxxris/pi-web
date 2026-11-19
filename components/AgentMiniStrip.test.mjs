@@ -32,9 +32,9 @@ const members = [
   session("s", "2026-01-04T00:00:00.000Z", { kind: "side", parentSessionId: "main" }),
 ];
 
-function render(selectedSessionId, locked = false) {
+function render(selectedSessionId, locked = false, customMembers = members, allMembers = undefined) {
   return renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(AgentMiniStrip, {
-    rootSession: root, members, selectedSessionId, runningSessionIds: new Set(["b"]), onSelectSession() {}, locked, onToggleLock() {},
+    rootSession: root, members: customMembers, allMembers, selectedSessionId, runningSessionIds: new Set(["b", "s2"]), onSelectSession() {}, locked, onToggleLock() {},
   })));
 }
 
@@ -73,4 +73,30 @@ test("locked on the main agent, the Main agent chip is the current one", () => {
   assert.deepEqual(buttons.map((tag) => /aria-current="true"/.test(tag)), [true, false, false, false, false]);
   assert.deepEqual(buttons.map((tag) => /tabindex="0"/.test(tag)), [true, false, false, false, false]);
   assert.match(buttons[0], /title="Main agent"/);
+});
+
+test("viewing a finished subagent with no active members keeps Main agent as the Tab stop", () => {
+  const html = render("finished", false, []);
+  const buttons = [...html.matchAll(/<button[^>]*>/g)].map(([tag]) => tag);
+  assert.equal(buttons.length, 2);
+  assert.deepEqual(buttons.map((tag) => /tabindex="0"/.test(tag)), [true, false]);
+  assert.deepEqual(buttons.map((tag) => /aria-current="true"/.test(tag)), [false, false]);
+  assert.match(buttons[0], /title="Back to the main agent"/);
+});
+
+test("side chat numbering preserves full family order when only an active side chat is shown", () => {
+  const s1 = session("s1", "2026-01-02T00:00:00.000Z", { kind: "side", parentSessionId: "main" });
+  const s2 = session("s2", "2026-01-03T00:00:00.000Z", { kind: "side", parentSessionId: "main" });
+  const html = render("s2", false, [s2], [s1, s2]);
+  assert.ok(html.includes(">Side chat 2<"));
+  assert.ok(!html.includes(">Side chat 1<"));
+});
+
+test("a queued subagent shows its Queued status without a running spinner", () => {
+  const queued = session("q", "2026-01-02T00:00:00.000Z", {
+    kind: "subagent", parentSessionId: "main", profile: "explore", description: "Waiting", status: "queued",
+  });
+  const html = render("q", false, [queued]);
+  assert.match(html, /title="Waiting · explore · Queued"/);
+  assert.doesNotMatch(html, /animate-spin/);
 });
