@@ -295,7 +295,7 @@ function haveSameRelevantToolEntries<T>(
 
 export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, toolClocks, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, searchBlock, onFork, forking, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnDurationMs, onCompact, isCompacting, compactError }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} entryId={entryId} onFork={onFork} forking={forking} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} toolClocks={toolClocks} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnDurationMs={turnDurationMs} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
@@ -306,9 +306,9 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
   }
   if (message.role === "custom") {
     if ((message as CustomMessage).customType === "compaction") {
-      return <CompactionMessageView message={message as CustomMessage} />;
+      return <CompactionMessageView message={message as CustomMessage} sessionId={sessionId} />;
     }
-    return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} />;
+    return <CustomMessageView message={message as CustomMessage} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} />;
   }
   if (message.role === "bashExecution") {
     return <BashExecutionView message={message as BashExecutionMessage} sessionId={sessionId} />;
@@ -340,10 +340,11 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.compactError === next.compactError;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onEditContent, onCancelEdit, isEditing }: {
+function UserMessageView({ message, cwd, onOpenFile, sessionId, entryId, onFork, forking, onEditContent, onCancelEdit, isEditing }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
+  sessionId?: string;
   entryId?: string;
   onFork?: (entryId: string, message: UserMessage) => void;
   forking?: boolean;
@@ -505,13 +506,13 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                 )}
               </div>
               {expanded && (
-                <MarkdownBody className="markdown-user-message" keepLineBreaks cwd={cwd} onOpenFile={onOpenFile}>{skillExpansionContent(content) ?? content}</MarkdownBody>
+                <MarkdownBody className="markdown-user-message" keepLineBreaks cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId}>{skillExpansionContent(content) ?? content}</MarkdownBody>
               )}
             </div>
           ) : (
           <>
           {imageBlocksNode}
-          {content && <SafeMarkdownBody className="markdown-user-message" keepLineBreaks cwd={cwd} onOpenFile={onOpenFile}>{content}</SafeMarkdownBody>}
+          {content && <SafeMarkdownBody className="markdown-user-message" keepLineBreaks cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId}>{content}</SafeMarkdownBody>}
           </>
           )}
         </div>
@@ -1012,7 +1013,7 @@ function AssistantMessageView({
 
 function BlockView({ block, searchTarget, toolResults, toolsNotRun, isStreaming, streamingDuration, toolCallDurations, toolClocks, cwd, onOpenFile, onOpenSubagent, sessionId, entryId, blockIndex }: { block: AssistantContentBlock; searchTarget?: boolean; toolResults?: Map<string, ToolResultMessage>; toolsNotRun?: boolean; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; toolClocks?: ToolClocks; cwd?: string; onOpenFile?: (filePath: string, page?: number) => void; onOpenSubagent?: (sessionId: string, label: string) => void; sessionId?: string; entryId?: string; blockIndex: number }) {
   if (block.type === "text") {
-    return <div data-message-text data-search-target={searchTarget || undefined}><TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} /></div>;
+    return <div data-message-text data-search-target={searchTarget || undefined}><TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} /></div>;
   }
   if (block.type === "thinking") {
     return <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} sessionId={sessionId} entryId={entryId} blockIndex={blockIndex} />;
@@ -1026,8 +1027,8 @@ function BlockView({ block, searchTarget, toolResults, toolsNotRun, isStreaming,
   return null;
 }
 
-function TextBlock({ block, isStreaming, cwd, onOpenFile }: { block: TextContent; isStreaming?: boolean; cwd?: string; onOpenFile?: (filePath: string, page?: number) => void }) {
-  return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile}>{block.text}</SafeMarkdownBody>;
+function TextBlock({ block, isStreaming, cwd, onOpenFile, sessionId }: { block: TextContent; isStreaming?: boolean; cwd?: string; onOpenFile?: (filePath: string, page?: number) => void; sessionId?: string }) {
+  return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId}>{block.text}</SafeMarkdownBody>;
 }
 
 // A model looping in its thinking can write megabytes. As one text node, every
@@ -1871,7 +1872,7 @@ function PairedResult({ text, isEmpty, isError }: {
   );
 }
 
-function CompactionMessageView({ message }: { message: CustomMessage }) {
+function CompactionMessageView({ message, sessionId }: { message: CustomMessage; sessionId?: string }) {
   const { t } = useI18n();
   // Collapsed by default, as in pi's TUI: a summary can run to pages.
   const [expanded, setExpanded] = useState(false);
@@ -1947,21 +1948,21 @@ function CompactionMessageView({ message }: { message: CustomMessage }) {
               )}
             </span>
           </button>
-          {expanded && <CompactionSummaryDetails summary={summary} />}
+          {expanded && <CompactionSummaryDetails summary={summary} sessionId={sessionId} />}
         </div>
       </div>
     </div>
   );
 }
 
-export function CompactionSummaryDetails({ summary }: { summary: string }) {
+export function CompactionSummaryDetails({ summary, sessionId }: { summary: string; sessionId?: string }) {
   const { t } = useI18n();
   const parsedSummary = useMemo(() => parseCompactionSummary(summary), [summary]);
 
   return (
     <div style={{ marginTop: 10 }}>
       {parsedSummary.body ? (
-        <MarkdownBody className="markdown-compaction-message">{parsedSummary.body}</MarkdownBody>
+        <MarkdownBody className="markdown-compaction-message" sessionId={sessionId}>{parsedSummary.body}</MarkdownBody>
       ) : (
          <span style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("i18n.noSummary")}</span>
       )}
@@ -2001,7 +2002,7 @@ function CompactionFileList({ title, files }: { title: string; files: string[] }
   );
 }
 
-function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string, page?: number) => void }) {
+function CustomMessageView({ message, cwd, onOpenFile, sessionId }: { message: CustomMessage; cwd?: string; onOpenFile?: (filePath: string, page?: number) => void; sessionId?: string }) {
   const { t } = useI18n();
   // Expanded by default: pi's TUI always draws a displayed custom message in full.
   const [contentExpanded, setContentExpanded] = useState(true);
@@ -2101,7 +2102,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
                   })}
                 </div>
               )}
-              {text ? <MarkdownBody className="markdown-custom-message" keepTextLayout cwd={cwd} onOpenFile={onOpenFile}>{text}</MarkdownBody> : <span style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("i18n.noMessage")}</span>}
+              {text ? <MarkdownBody className="markdown-custom-message" keepTextLayout cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId}>{text}</MarkdownBody> : <span style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("i18n.noMessage")}</span>}
             </div>
 
             <div

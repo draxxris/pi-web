@@ -17,6 +17,17 @@ export function encodeFilePathForApi(filePath: string): string {
   return segments.map(encodeURIComponent).join("/");
 }
 
+/**
+ * The `/api/files` URL of a local file's bytes. `sessionId` is what lets the
+ * route read a file outside the allowed roots: it authorizes a path the session
+ * mentions (`lib/session-file-references-core.ts`), so an image a reply points
+ * at, or a clip it wrote to `/tmp`, still displays.
+ */
+export function fileReadApiUrl(filePath: string, sessionId?: string | null): string {
+  const target = `/api/files/${encodeFilePathForApi(filePath)}?type=read`;
+  return sessionId ? `${target}&sessionId=${encodeURIComponent(sessionId)}` : target;
+}
+
 export function getFileName(filePath: string): string {
   const normalized = normalizeFilePathSlashes(filePath).replace(/\/+$/, "");
   return normalized.split("/").pop() ?? normalized;
