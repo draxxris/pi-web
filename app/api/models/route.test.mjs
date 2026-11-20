@@ -17,8 +17,17 @@ const agentDir = join(root, "agent");
 const repo = join(root, "repo");
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
 const previousOffline = process.env.PI_OFFLINE;
+// A provider this machine holds credentials for adds its whole catalog to the list the
+// route builds, so an exact-list assertion would test the shell rather than the route.
+// The five named keys cover the providers the tests name; the `AWS_` prefix is a family
+// (a Bedrock bearer token or role alone configures `amazon-bedrock`, with or without a
+// key) and is collected before anything is deleted.
+const strippedEnvKeys = [
+  "DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+  ...Object.keys(process.env).filter((key) => key.startsWith("AWS_")),
+];
 const preservedEnv = {};
-for (const key of ["DEEPSEEK_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
+for (const key of strippedEnvKeys) {
   if (key in process.env) {
     preservedEnv[key] = process.env[key];
     delete process.env[key];

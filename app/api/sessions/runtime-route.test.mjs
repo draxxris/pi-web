@@ -2,8 +2,18 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { createJiti } from "jiti";
+
+// `getAgentDir()` reads PI_CODING_AGENT_DIR on every call, so point it at a
+// scratch dir before a route is imported: no test may read the real
+// ~/.pi/agent (a developer's sessions, session state, settings). A test that
+// needs its own dir sets one and restores this one afterwards.
+const scratchAgentDir = await mkdtemp(join(tmpdir(), "pi-web-sessions-route-agent-"));
+process.env.PI_CODING_AGENT_DIR = scratchAgentDir;
+// Not restored: an async tail after cleanup must still not reach the real
+// ~/.pi/agent; a read of this scratch path just finds nothing.
+after(async () => { await rm(scratchAgentDir, { recursive: true, force: true }); });
 
 const jiti = createJiti(import.meta.url, {
   alias: { "@": process.cwd() },
